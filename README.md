@@ -51,3 +51,34 @@ The system enables clinicians and researchers to:
 ---
 
 > 📍 *This project is part of ongoing research in neuromuscular assessment and assistive rehabilitation technology.*
+
+
+
+## 📂 Previous Design
+
+This section showcases the earlier versions of the PCB and sensor module designs for the Hand Grip Force Measurement Device.
+
+| 3D View | 3D View (with Bluetooth Module) |
+|--------|-------------------------------|
+| ![3D View](hardware/previous%20design/images/3dview.png) | ![3D View BTH Module](hardware/previous%20design/images/3dview_bth_module.png) |
+
+| PCB Layout | PCB Layout (with Bluetooth Module) |
+|------------|------------------------------------|
+| ![PCB](hardware/previous%20design/images/pcb.png) | ![PCB BTH Module](hardware/previous%20design/images/pcb_bth_module.png) |
+
+
+
+## 🔧 New Design
+
+This section features the redesigned pressure sensor and control PCB with updated layout and schematic.
+
+| Front View | Back View |
+|------------|------------|
+| ![3D View Front](hardware/pcb%20design/images/3dviewfront.png) | ![3D View Back](hardware/pcb%20design/images/3dviewback.png) |
+
+### 🧩 Schematic
+
+![Schematic](hardware/pcb%20design/images/schemetic.png)
+
+### 3D View of the Pressure Sensor Pad
+![Pressure Sensor Pad 3D](/hardware/sensors%20design/pressure%20sensor%20pad%20design/pressureSensorPadFootPrint_v2_3D.png)
