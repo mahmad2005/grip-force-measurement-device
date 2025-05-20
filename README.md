@@ -53,21 +53,6 @@ The system enables clinicians and researchers to:
 > 📍 *This project is part of ongoing research in neuromuscular assessment and assistive rehabilitation technology.*
 
 
-
-## 📂 Previous Design
-
-This section showcases the earlier versions of the PCB and sensor module designs for the Hand Grip Force Measurement Device.
-
-| 3D View | 3D View (with Bluetooth Module) |
-|--------|-------------------------------|
-| ![3D View](hardware/previous%20design/images/3dview.png) | ![3D View BTH Module](hardware/previous%20design/images/3dview_bth_module.png) |
-
-| PCB Layout | PCB Layout (with Bluetooth Module) |
-|------------|------------------------------------|
-| ![PCB](hardware/previous%20design/images/pcb.png) | ![PCB BTH Module](hardware/previous%20design/images/pcb_bth_module.png) |
-
-
-
 ## 🔧 New Design
 
 This section features the redesigned pressure sensor and control PCB with updated layout and schematic.
@@ -82,3 +67,37 @@ This section features the redesigned pressure sensor and control PCB with update
 
 ### 3D View of the Pressure Sensor Pad
 ![Pressure Sensor Pad 3D](/hardware/sensors%20design/pressure%20sensor%20pad%20design/pressureSensorPadFootPrint_v2_3D.png)
+
+
+
+## 📂 Previous Design
+
+This section showcases the earlier versions of the PCB and sensor module designs for the Hand Grip Force Measurement Device.
+
+| 3D View | 3D View (with Bluetooth Module) |
+|--------|-------------------------------|
+| ![3D View](hardware/previous%20design/images/3dview.png) | ![3D View BTH Module](hardware/previous%20design/images/3dview_bth_module.png) |
+
+| PCB Layout | PCB Layout (with Bluetooth Module) |
+|------------|------------------------------------|
+| ![PCB](hardware/previous%20design/images/pcb.png) | ![PCB BTH Module](hardware/previous%20design/images/pcb_bth_module.png) |
+
+
+### 🧪 Assembly and Testing Photos
+
+These images capture key stages of the prototype development, including hardware assembly, sensor components, and testing setup.
+
+| Internal Circuit | Grip Force Testing | PCB in Action |
+|------------------|--------------------|---------------|
+| ![Circuit Inside](hardware/previous%20design/images/CircuitInsideCylindricalCase.jpeg) | ![Grip Force Test](hardware/previous%20design/images/measuringGripForce.jpeg) | ![PCB at Work](hardware/previous%20design/images/PCBatWork.jpeg) |
+
+These photos show physical testing and assembly steps:
+- Internal circuit mounted inside a cylindrical 3D-printed case.
+- Testing hand grip force with the pressure sensor system connected to a display.
+- Powered PCB with Bluetooth module running in real hardware.
+
+| Pressure Sensor Pad | Pressure Sensing Demo |
+|---------------------|------------------------|
+| ![Sensor Pad](hardware/previous%20design/images/32x64_sensorPad.jpeg) | ![Demo Setup](hardware/previous%20design/images/pressureSensingDemostration.jpeg) |
+
+
