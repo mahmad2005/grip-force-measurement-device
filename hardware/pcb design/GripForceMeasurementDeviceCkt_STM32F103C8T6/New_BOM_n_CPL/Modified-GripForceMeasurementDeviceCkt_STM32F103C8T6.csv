@@ -1,0 +1,32 @@
+Comment,Designator,Footprint,JLCPCB Part #,Qty
+100n,"C1,C2,C3,C4,C8,C10,C12,C15,C16,C17,C18,C19,C20,C21,C22,C23,C24",Capacitor_SMD:C_0603_1608Metric,C14663,17
+10n,C5,Capacitor_SMD:C_0603_1608Metric,C57112,1
+1u,"C6,C7",Capacitor_SMD:C_0603_1608Metric,C15849,2
+10u,C9,Capacitor_SMD:C_1206_3216Metric,C13585,1
+4.7u,C11,Capacitor_SMD:C_1206_3216Metric,C29823,1
+22p,"C13,C14",Capacitor_SMD:C_0603_1608Metric,C105620,2
+1N5819,D1,Diode_SMD:D_SOD-323_HandSoldering,C6067464,1
+LED-Red,D2,LED_SMD:LED_0603_1608Metric,C5355420,1
+LED-Green,D3,LED_SMD:LED_0603_1608Metric,C19171301,1
+FerriteBead,FB1,Inductor_SMD:L_0805_2012Metric,C85840,1
+Power_Conn,J1,Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical,C706875,1
+Boot Conn,J3,Connector_PinHeader_2.54mm:PinHeader_2x03_P2.54mm_Vertical,C7501274,1
+SWD,J5,Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical,C2691448,1
+Conn_01x02,J6,Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical,C706874,1
+Conn_01x03,J7,Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical,C706875,1
+Gyro_Sensor_ICM_20948_SparkFun_Module,J9,Connector_PinSocket_2.54mm:PinSocket_1x06_P2.54mm_Vertical,C6332199,1
+Conn_01x32,"J10,J11,J12,J13,J14,J15,J16,J17,J18,J19",Connector_FFC-FPC:Hirose_FH12-32S-0.5SH_1x32-1MP_P0.50mm_Horizontal,C262672,10
+L,L1,Inductor_SMD:L_0603_1608Metric,C139179,1
+USB_C_Plug_USB2.0,P1,Connector_USB:USB_C_Receptacle_Amphenol_12401610E4-2A,C5119948,1
+5.1k,R1,Resistor_SMD:R_0603_1608Metric,C23186,1
+10k,"R2,R5",Resistor_SMD:R_0603_1608Metric,C25804,2
+510R,"R3,R4",Resistor_SMD:R_0603_1608Metric,C2073794,2
+330R,R6,Resistor_THT:R_Axial_DIN0207_L6.3mm_D2.5mm_P10.16mm_Horizontal,C173152,1
+500k,RV1,Potentiometer_THT:Potentiometer_Bourns_3296W_Vertical,C118921,1
+SW_Push,SW1,Button_Switch_SMD:SW_Tactile_SPST_NO_Straight_CK_PTS636Sx25SMTRLFS,C318938,1
+ESP32-C3-Mini,U1,RF_WiFi:ESP32-C3-Mini-through-hole,,1
+FT232RL,U2,Package_SO:SSOP-28_5.3x10.2mm_P0.65mm,C8690,1
+LM358,U3,Package_SO:SO-8_3.9x4.9mm_P1.27mm,C5296727,1
+STM32F103C8Tx,U4,Package_QFP:LQFP-48_7x7mm_P0.5mm,C8734,1
+ADG732BSUZ,"U5,U6,U7,U8,U9,U10,U11,U12,U13,U14",Package_QFP:TQFP-48_7x7mm_P0.5mm,C114845,10
+8MHz,Y1,Crystal:Crystal_HC49-4H_Vertical,C21263,1
