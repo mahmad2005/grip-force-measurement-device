@@ -52,6 +52,12 @@ default.size.stdout \
 OBJDUMP_LIST += \
 gripForceMeasurement32x64UsingSTM32f103C8T6_main.list \
 
+OBJCOPY_HEX += \
+gripForceMeasurement32x64UsingSTM32f103C8T6_main.hex \
+
+OBJCOPY_BIN += \
+gripForceMeasurement32x64UsingSTM32f103C8T6_main.bin \
+
 
 # All Target
 all: main-build
@@ -75,12 +81,22 @@ gripForceMeasurement32x64UsingSTM32f103C8T6_main.list: $(EXECUTABLES) makefile o
 	@echo 'Finished building: $@'
 	@echo ' '
 
+gripForceMeasurement32x64UsingSTM32f103C8T6_main.hex: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-objcopy  -O ihex $(EXECUTABLES) "gripForceMeasurement32x64UsingSTM32f103C8T6_main.hex"
+	@echo 'Finished building: $@'
+	@echo ' '
+
+gripForceMeasurement32x64UsingSTM32f103C8T6_main.bin: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-objcopy  -O binary $(EXECUTABLES) "gripForceMeasurement32x64UsingSTM32f103C8T6_main.bin"
+	@echo 'Finished building: $@'
+	@echo ' '
+
 # Other Targets
 clean:
-	-$(RM) default.size.stdout gripForceMeasurement32x64UsingSTM32f103C8T6_main.elf gripForceMeasurement32x64UsingSTM32f103C8T6_main.list gripForceMeasurement32x64UsingSTM32f103C8T6_main.map
+	-$(RM) default.size.stdout gripForceMeasurement32x64UsingSTM32f103C8T6_main.bin gripForceMeasurement32x64UsingSTM32f103C8T6_main.elf gripForceMeasurement32x64UsingSTM32f103C8T6_main.hex gripForceMeasurement32x64UsingSTM32f103C8T6_main.list gripForceMeasurement32x64UsingSTM32f103C8T6_main.map
 	-@echo ' '
 
-secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST)
+secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST) $(OBJCOPY_HEX) $(OBJCOPY_BIN)
 
 fail-specified-linker-script-missing:
 	@echo 'Error: Cannot find the specified linker script. Check the linker settings in the build configuration.'

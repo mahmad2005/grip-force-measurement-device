@@ -38,11 +38,12 @@
 //#define A2_PIN GPIO_PIN_7
 //#define A3_PIN GPIO_PIN_8
 //#define A4_PIN GPIO_PIN_9
-#define ROW_CS_PIN GPIO_PIN_12
-#define COL1_CS_PIN GPIO_PIN_13
-#define COL2_CS_PIN GPIO_PIN_14
-#define WR_PIN GPIO_PIN_15
-#define EN_PIN GPIO_PIN_4
+//#define ROW_CS_PIN GPIO_PIN_12
+//#define COL1_CS_PIN GPIO_PIN_13
+//#define COL2_CS_PIN GPIO_PIN_14
+
+#define WR_PIN GPIO_PIN_10
+#define EN_PIN GPIO_PIN_1
 #define GPIO_PORT GPIOB
 
 #define DELAY_MicroSec 10
@@ -64,7 +65,7 @@
 #define CON_SEL_L_1 GPIO_PIN_11
 #define CON_SEL_L_2 GPIO_PIN_12
 #define CON_SEL_L_3 GPIO_PIN_6
-#define CON_SEL_L_4 GPIO_PIN_11		// PORTA
+#define CON_SEL_L_4 GPIO_PIN_1		// PORTA
 
 #define ROW_SEL_L GPIO_PIN_8
 #define ROW_SEL_R GPIO_PIN_9
@@ -79,6 +80,8 @@
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
 
+SPI_HandleTypeDef hspi1;
+
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
@@ -90,6 +93,10 @@ uint16_t pressure_readings[32][64];
 uint8_t start_marker[] = {0xAA, 0xBB};
 uint8_t end_marker[] = {0xBB, 0xAA};
 
+// Updated 2D array to store pressure readings
+//uint16_t pressure_readings[32][64];
+uint16_t dummy_receive[32][64];
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -97,6 +104,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_SPI1_Init(void);
 /* USER CODE BEGIN PFP */
 
 void ADC1_Init(void);
@@ -216,17 +224,28 @@ void ADG732_Init(void) {
     HAL_GPIO_Init(GPIO_PORT, &GPIO_InitStruct);
 
     // Configure chip select pins
-    GPIO_InitStruct.Pin = ROW_CS_PIN | COL1_CS_PIN | COL2_CS_PIN;
+    GPIO_InitStruct.Pin = CON_SEL_R_1 | CON_SEL_R_2 | CON_SEL_R_3 | CON_SEL_L_1 | CON_SEL_L_2 | CON_SEL_L_3 | ROW_SEL_L | ROW_SEL_R;
     HAL_GPIO_Init(GPIO_PORT, &GPIO_InitStruct);
+
+    // Configure chip select pins
+	GPIO_InitStruct.Pin = CON_SEL_R_4 | CON_SEL_L_4;
+	HAL_GPIO_Init(GPIO_PORT_A, &GPIO_InitStruct);
 
     // Configure WR and EN pins
     GPIO_InitStruct.Pin = WR_PIN | EN_PIN;
     HAL_GPIO_Init(GPIO_PORT, &GPIO_InitStruct);
 
     // Set default states
-    HAL_GPIO_WritePin(GPIO_PORT, ROW_CS_PIN, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIO_PORT, COL1_CS_PIN, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIO_PORT, COL2_CS_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_R_1, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_R_2, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_R_3, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT_A, CON_SEL_R_4, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_L_1, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_L_2, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_L_3, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(GPIO_PORT_A, CON_SEL_L_4, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_L, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_R, GPIO_PIN_SET);
     HAL_GPIO_WritePin(GPIO_PORT, WR_PIN, GPIO_PIN_SET);
     HAL_GPIO_WritePin(GPIO_PORT, EN_PIN, GPIO_PIN_RESET);
 }
@@ -241,11 +260,23 @@ void ADG732_SetAddress(uint8_t address) {
 }
 
 // Map logical column index to physical column index
+//uint8_t MapColumnIndex(uint8_t col) {
+//    if (col < 16) {
+//        return col; // 0–15 map directly to 0–15
+//    } else if (col < 32) {
+//        return 31 - (col - 16); // 16–31 map in reverse to 31–16
+//    } else if (col < 48) {
+//        return col; // 32–47 map directly to 32–47
+//    } else {
+//        return 63 - (col - 48); // 48–63 map in reverse to 63–48
+//    }
+//}
+
 uint8_t MapColumnIndex(uint8_t col) {
     if (col < 16) {
-        return col; // 0–15 map directly to 0–15
+        return 16 + col; // 0–15 map directly to 16–31
     } else if (col < 32) {
-        return 31 - (col - 16); // 16–31 map in reverse to 31–16
+        return (31-col); // 16–31 map in reverse to 15–0
     } else if (col < 48) {
         return col; // 32–47 map directly to 32–47
     } else {
@@ -262,78 +293,252 @@ uint8_t MapRowIndex(uint8_t row) {
 }
 
 // Select a specific row and column
-void ADG732_SelectChannel(uint8_t col_channel, uint8_t row_channel) {
+void ADG732_SelectChannel(uint8_t col_channel, uint8_t row_channel_val) {
     // Select row
-	//HAL_GPIO_WritePin(GPIO_PORT, COL1_CS_PIN, GPIO_PIN_RESET);
-	//HAL_GPIO_WritePin(GPIO_PORT, COL2_CS_PIN, GPIO_PIN_RESET);
-	//delay_us(10);
+	uint8_t row_channel;
+	if (row_channel_val < 16) {
+		//row_channel = 15 - row_channel_val;
+		row_channel = row_channel_val;
+	}
+	else {
+		 row_channel = 16 + (31 - row_channel_val);
+		//row_channel = row_channel_val;
+	}
+
+//	HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_L, GPIO_PIN_RESET);
+//	HAL_GPIO_WritePin(GPIO_PORT, EN_PIN, GPIO_PIN_SET);   // disable (EN is active-low)
+
+	if (row_channel >= 0 && row_channel <8 && col_channel < 32) {
+		HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_L, GPIO_PIN_RESET);
+	}
+	else if (row_channel >= 0 && row_channel <8 && col_channel >= 32) {
+		HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_R, GPIO_PIN_RESET);
+	}
+	else if (row_channel >= 8 && row_channel <16 && col_channel < 32) {
+		HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_L, GPIO_PIN_RESET);
+	}
+	else if (row_channel >= 8 && row_channel <16 && col_channel >= 32) {
+		HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_R, GPIO_PIN_RESET);
+	}
+//bottom half
+	else if (row_channel >= 16 && row_channel <24 && col_channel < 32) {
+			HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_L, GPIO_PIN_RESET);
+	}
+	else if (row_channel >= 16 && row_channel <24 && col_channel >= 32) {
+		HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_R, GPIO_PIN_RESET);
+	}
+	else if (row_channel >= 24 && row_channel <32 && col_channel < 32) {
+		HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_L, GPIO_PIN_RESET);
+	}
+	else {
+		HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_R, GPIO_PIN_RESET);
+	}
+
+//	if (col_channel <32) {
+//		if (row_channel_val < 16) {
+//			//row_channel = 15 - row_channel_val;
+//			row_channel_val = 16 + row_channel_val;
+//		}
+//		else {
+//			row_channel_val = 31- row_channel_val;
+//			//row_channel = row_channel_val;
+//		}
+//	}
+//
+//    ADG732_SetAddress(row_channel_val);
+	uint8_t row_address = row_channel_val;
+	if (col_channel < 32) {
+	    if (row_channel_val < 16) {
+	        row_address = 16 + row_channel_val;
+	    } else {
+	        row_address = 31 - row_channel_val;
+	    }
+	}
+	ADG732_SetAddress(row_address);
+
+    delay_us(1);
+    HAL_GPIO_WritePin(GPIO_PORT, WR_PIN, GPIO_PIN_RESET);
+    delay_us(1);
+    HAL_GPIO_WritePin(GPIO_PORT, WR_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_L, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_R, GPIO_PIN_SET);
+
+//    if (col_channel <32 && row_channel_val < 16) {
+//    	row_channel = (31 - row_channel_val);
+//    }
+	if (col_channel <32) {
+		if (row_channel_val < 16) {
+			//row_channel = 15 - row_channel_val;
+			//row_channel = 31 - row_channel_val;
+			//row_channel = 31- row_channel_val;
+		}
+	}
+
+
+    //Select Column
+//    HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_L_1, GPIO_PIN_RESET);
+
+    ADG732_SetAddress(col_channel);
+    delay_us(1);
+
 	if (row_channel >= 0 && row_channel <8 && col_channel < 32) {
 		HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_L_1, GPIO_PIN_RESET);
 	}
-	else if (row_channel >= 8 && row_channel <16 && col_channel > 32) {
+	else if (row_channel >= 0 && row_channel <8 && col_channel >= 32) {
 		HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_R_1, GPIO_PIN_RESET);
 	}
 	else if (row_channel >= 8 && row_channel <16 && col_channel < 32) {
 		HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_L_2, GPIO_PIN_RESET);
 	}
-	else if (row_channel >= 8 && row_channel <16 && col_channel > 32) {
+	else if (row_channel >= 8 && row_channel <16 && col_channel >= 32) {
 		HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_R_2, GPIO_PIN_RESET);
 	}
+//bottom half
 	else if (row_channel >= 16 && row_channel <24 && col_channel < 32) {
 			HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_L_3, GPIO_PIN_RESET);
 	}
-	else if (row_channel >= 16 && row_channel <24 && col_channel > 32) {
+	else if (row_channel >= 16 && row_channel <24 && col_channel >= 32) {
 		HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_R_3, GPIO_PIN_RESET);
 	}
-	else if (row_channel >= 24 && row_channel <32 && col_channel > 32) {
+	else if (row_channel >= 24 && row_channel <32 && col_channel < 32) {
 		HAL_GPIO_WritePin(GPIO_PORT_A, CON_SEL_L_4, GPIO_PIN_RESET);
 	}
 	else {
 		HAL_GPIO_WritePin(GPIO_PORT_A, CON_SEL_R_4, GPIO_PIN_RESET);
 	}
-    //HAL_GPIO_WritePin(GPIO_PORT, ROW_CS_PIN, GPIO_PIN_RESET);
-    ADG732_SetAddress(row_channel);
-    HAL_GPIO_WritePin(GPIO_PORT, WR_PIN, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIO_PORT, WR_PIN, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIO_PORT, ROW_CS_PIN, GPIO_PIN_SET);
-    //delay_us(10); // 5 MicroSec delay to clear the current on the pad
 
-    // Select column multiplexer
-//    if (col_channel < 32) {
-//        HAL_GPIO_WritePin(GPIO_PORT, COL1_CS_PIN, GPIO_PIN_RESET);
-//    } else {
-//        col_channel -= 32;
-//        HAL_GPIO_WritePin(GPIO_PORT, COL2_CS_PIN, GPIO_PIN_RESET);
-//    }
-	if (row_channel >= 0 && row_channel <8 && col_channel < 32) {
-		HAL_GPIO_WritePin(GPIO_PORT, COL1_CS_PIN, GPIO_PIN_RESET);
-	}
-	else if (row_channel >= 8 && row_channel <16 && col_channel > 32) {
-		HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_R, GPIO_PIN_RESET);
-	}
-	else if (row_channel >= 8 && row_channel <16 && col_channel < 32) {
-		HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_L, GPIO_PIN_RESET);
-	}
-	else if (row_channel >= 8 && row_channel <16 && col_channel > 32) {
-		HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_R, GPIO_PIN_RESET);
-	}
-	else if (row_channel >= 16 && row_channel <24 && col_channel < 32) {
-			HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_L, GPIO_PIN_RESET);
-	}
-	else if (row_channel >= 16 && row_channel <24 && col_channel > 32) {
-		HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_R, GPIO_PIN_RESET);
-	}
-	else if (row_channel >= 24 && row_channel <32 && col_channel > 32) {
-		HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_L, GPIO_PIN_RESET);
-	}
-	else {
-		HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_R, GPIO_PIN_RESET);
-	}
-    ADG732_SetAddress(col_channel);
+    //HAL_GPIO_WritePin(GPIO_PORT, ROW_CS_PIN, GPIO_PIN_RESET);
+//    ADG732_SetAddress(col_channel);
+//    delay_us(1);
     HAL_GPIO_WritePin(GPIO_PORT, WR_PIN, GPIO_PIN_RESET);
+    delay_us(1);
     HAL_GPIO_WritePin(GPIO_PORT, WR_PIN, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIO_PORT, COL1_CS_PIN, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIO_PORT, COL2_CS_PIN, GPIO_PIN_SET);
+
+    HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_L_1, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_L_2, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_L_3, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT_A, CON_SEL_L_4, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_R_1, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_R_2, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_R_3, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT_A, CON_SEL_R_4, GPIO_PIN_SET);
+
+//	if (row_channel >= 0 && row_channel <8 && col_channel >= 32) {
+//		HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_L_1, GPIO_PIN_RESET);
+//	}
+
+//    HAL_GPIO_WritePin(GPIO_PORT, EN_PIN, GPIO_PIN_RESET); // enable
+//    delay_us(2);
+}
+
+// Helper: compute the actual row address for the ADG732 given the logical row and which column half we're on
+static inline uint8_t MapRowAddrForSide(uint8_t row_logical, uint8_t col_channel) {
+    // Your stated rules:
+    // - If col < 32:
+    //     - if row < 16: row_addr = 16 + row
+    //     - else       : row_addr = 31 - row
+    // - If col >= 32:
+    //     - if row < 16: row_addr = row (unchanged)
+    //     - else       : row_addr = 16 + (31 - row)
+
+    if (col_channel < 32) {
+        if (row_logical < 16) {
+            return (uint8_t)(16 + row_logical);
+        } else {
+            return (uint8_t)(31 - row_logical);
+        }
+    } else {
+        if (row_logical < 16) {
+            return row_logical;
+        } else {
+            return (uint8_t)(16 + (31 - row_logical));
+        }
+    }
+}
+
+
+// Select a specific row and column
+void ADG732_SelectChannel2(uint8_t col_channel /* already mapped */, uint8_t row_logical /* 0..31 raw */) {
+    // ----- Decide side and row group (for enables) without mutating inputs -----
+    const uint8_t side_left = (col_channel < 32);
+    const uint8_t row_group = row_logical >> 3;   // 0..3 (groups of 8 rows)
+
+    // ----- Drive ROW side enable first -----
+    // Deassert both rows, then assert the one we want
+    HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_L, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_R, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT, side_left ? ROW_SEL_L : ROW_SEL_R, GPIO_PIN_RESET);
+
+    // ----- Set ROW address (mapped for this side), strobe WR -----
+    const uint8_t row_address = MapRowAddrForSide(row_logical, col_channel);
+    ADG732_SetAddress(row_address);
+    delay_us(1);
+    HAL_GPIO_WritePin(GPIO_PORT, WR_PIN, GPIO_PIN_RESET);
+    delay_us(1);
+    HAL_GPIO_WritePin(GPIO_PORT, WR_PIN, GPIO_PIN_SET);
+
+    // Optionally release row enables if your hardware needs it:
+     HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_L, GPIO_PIN_SET);
+     HAL_GPIO_WritePin(GPIO_PORT, ROW_SEL_R, GPIO_PIN_SET);
+
+    // ----- Now set COLUMN address, then select the correct COLUMN enable for this side+row_group -----
+    ADG732_SetAddress(col_channel);
+    delay_us(1);
+    HAL_GPIO_WritePin(GPIO_PORT, WR_PIN, GPIO_PIN_RESET);
+    delay_us(1);
+    HAL_GPIO_WritePin(GPIO_PORT, WR_PIN, GPIO_PIN_SET);
+
+    // Deassert all column enables first
+    HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_L_1, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_L_2, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_L_3, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT_A, CON_SEL_L_4, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_R_1, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_R_2, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_R_3, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIO_PORT_A, CON_SEL_R_4, GPIO_PIN_SET);
+
+    // Assert only the one we need
+    if (side_left) {
+        switch (row_group) {
+            case 0: HAL_GPIO_WritePin(GPIO_PORT,   CON_SEL_L_1, GPIO_PIN_RESET); break;
+            case 1: HAL_GPIO_WritePin(GPIO_PORT,   CON_SEL_L_2, GPIO_PIN_RESET); break;
+            case 2: HAL_GPIO_WritePin(GPIO_PORT,   CON_SEL_L_3, GPIO_PIN_RESET); break;
+            default: HAL_GPIO_WritePin(GPIO_PORT_A, CON_SEL_L_4, GPIO_PIN_RESET); break;
+        }
+    } else {
+        switch (row_group) {
+            case 0: HAL_GPIO_WritePin(GPIO_PORT,   CON_SEL_R_1, GPIO_PIN_RESET); break;
+            case 1: HAL_GPIO_WritePin(GPIO_PORT,   CON_SEL_R_2, GPIO_PIN_RESET); break;
+            case 2: HAL_GPIO_WritePin(GPIO_PORT,   CON_SEL_R_3, GPIO_PIN_RESET); break;
+            default: HAL_GPIO_WritePin(GPIO_PORT_A, CON_SEL_R_4, GPIO_PIN_RESET); break;
+        }
+    }
+
+    // If you want to latch columns and then release enables immediately:
+    // HAL_GPIO_WritePin(GPIO_PORT, CON_SEL_L_1, GPIO_PIN_SET); ...
+    // (or keep asserted during the ADC read—depends on your timing design)
+}
+
+
+void inside_for_loop(uint8_t row) {
+	for (uint8_t col = 0; col < 64; col++) {
+		uint8_t mapped_col = MapColumnIndex(col); // Map logical to physical column
+		uint8_t mapped_row = MapRowIndex(row);
+		ADG732_SelectChannel2(mapped_col, row);
+		delay_us(DELAY_MicroSec);
+		//delay_us(10);
+
+		// Read ADC value and store in the array
+		//pressure_readings[row][col] = Read_ADC_Channel0();
+
+		//pressure_readings[row][col] = (row >= 24) ? Read_ADC_Channel0() : 0;
+		uint16_t adc_val;
+		Read_ADC_Channel0();
+		 adc_val = Read_ADC_Channel0();  // Always read
+
+		pressure_readings[row][col] = adc_val; //1024;
+	}
 }
 
 
@@ -341,15 +546,21 @@ void ADG732_SelectChannel(uint8_t col_channel, uint8_t row_channel) {
 // Collect pressure readings
 void Collect_Pressure_Readings(void) {
     for (uint8_t row = 0; row < 32; row++) {			// 0 to 32
-        for (uint8_t col = 0; col < 64; col++) {	// 0 to 64
-            uint8_t mapped_col = MapColumnIndex(col); // Map logical to physical column
-            uint8_t mapped_row = MapRowIndex(row);
-            ADG732_SelectChannel(mapped_col, mapped_row);
-            delay_us(DELAY_MicroSec);
-            //delay_us(100);
+    inside_for_loop(row);
 
+    }
+}
+
+
+// Collect pressure readings
+void Collect_Dummy_Pressure_Readings(void) {
+    for (uint8_t row = 0; row < 32; row++) {			// 0 to 32
+        for (uint8_t col = 0; col < 64; col++) {	// 0 to 64
             // Read ADC value and store in the array
-            pressure_readings[row][col] = Read_ADC_Channel0();
+            pressure_readings[row][col] = 1048;//Read_ADC_Channel0();
+            if (row >= 31 && col >= 60){
+            	pressure_readings[row][col] = 2122;
+            }
         }
     }
 }
@@ -432,6 +643,7 @@ int main(void)
   MX_GPIO_Init();
   MX_ADC1_Init();
   MX_USART1_UART_Init();
+  MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
 
   UD_GPIO_Init();
@@ -439,6 +651,16 @@ int main(void)
   ADG732_Init();
   ADC1_Init();
   USART1_Init();
+
+
+  HAL_Delay(1000);
+  myPinToggle();
+
+
+
+
+  Collect_Dummy_Pressure_Readings();
+  HAL_SPI_TransmitReceive_IT(&hspi1, (uint8_t*)&pressure_readings, (uint8_t *)&dummy_receive, sizeof(pressure_readings));
 
   /* USER CODE END 2 */
 
@@ -450,10 +672,10 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-	  Collect_Pressure_Readings();    // Collect readings from the 8x8 matrix
-	  Transmit_Pressure_Readings_RowChunks();
+	  //Collect_Pressure_Readings();    // Collect readings from the 8x8 matrix
+	  //Transmit_Pressure_Readings_RowChunks();
 
-	  HAL_Delay(10);  // Delay between each full scan to avoid overflow
+	  HAL_Delay(100);  // Delay between each full scan to avoid overflow
   }
   /* USER CODE END 3 */
 }
@@ -552,6 +774,43 @@ static void MX_ADC1_Init(void)
 }
 
 /**
+  * @brief SPI1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI1_Init(void)
+{
+
+  /* USER CODE BEGIN SPI1_Init 0 */
+
+  /* USER CODE END SPI1_Init 0 */
+
+  /* USER CODE BEGIN SPI1_Init 1 */
+
+  /* USER CODE END SPI1_Init 1 */
+  /* SPI1 parameter configuration*/
+  hspi1.Instance = SPI1;
+  hspi1.Init.Mode = SPI_MODE_SLAVE;
+  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi1.Init.NSS = SPI_NSS_HARD_INPUT;
+  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi1.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI1_Init 2 */
+
+  /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
   * @brief USART1 Initialization Function
   * @param None
   * @retval None
@@ -591,18 +850,52 @@ static void MX_USART1_UART_Init(void)
   */
 static void MX_GPIO_Init(void)
 {
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
 /* USER CODE BEGIN MX_GPIO_Init_1 */
 /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : PC13 */
+  GPIO_InitStruct.Pin = GPIO_PIN_13;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
+
+void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi) {
+    if (hspi->Instance == SPI1) {
+        //HAL_UART_Transmit(&huart1, (uint8_t *)"Request Received: ", 18, HAL_MAX_DELAY);
+        //HAL_UART_Transmit(&huart1, rx_buffer, SPI_MSG_LEN, HAL_MAX_DELAY);
+        //HAL_UART_Transmit(&huart1, (uint8_t *)&dummy_receive[1][1], sizeof(dummy_receive[1][1]), HAL_MAX_DELAY);
+        //HAL_UART_Transmit(&huart1, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
+
+        //char msg[32];
+        //sprintf(msg, "Value: %u\r\n", dummy_receive[1][1]);
+        //HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+
+        // re-arm the transfer
+        //HAL_SPI_TransmitReceive_IT(&hspi1, slave_response, rx_buffer, SPI_MSG_LEN);
+        //HAL_SPI_TransmitReceive_IT(&hspi1, (uint8_t*)pressure_readings, (uint8_t *)dummy_receive, sizeof(pressure_readings));
+        //HAL_SPI_TransmitReceive_IT(&hspi1, (uint8_t*)&pressure_readings[1][1], (uint8_t *)&dummy_receive[1][1], sizeof(pressure_readings[1][1]));
+    	//Collect_Pressure_Readings();
+    	//Collect_Dummy_Pressure_Readings();
+        HAL_SPI_TransmitReceive_IT(&hspi1, (uint8_t*)&pressure_readings, (uint8_t *)&dummy_receive, sizeof(pressure_readings));
+        Collect_Pressure_Readings();
+    }
+}
 
 /* USER CODE END 4 */
 
