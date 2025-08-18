@@ -97,6 +97,20 @@ uint8_t end_marker[] = {0xBB, 0xAA};
 //uint16_t pressure_readings[32][64];
 uint16_t dummy_receive[32][64];
 
+
+// globals
+static uint16_t bufA[32][64];
+static uint16_t bufB[32][64];
+static volatile uint16_t (*tx_buf)[64]   = bufA;  // currently served to SPI
+static volatile uint16_t (*fill_buf)[64] = bufB;  // being filled by ADC
+static volatile uint8_t frame_ready = 0;
+
+
+volatile uint8_t data_ready = 0;
+volatile uint8_t spi_busy = 0;
+
+volatile uint8_t need_scan  = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -552,6 +566,25 @@ void Collect_Pressure_Readings(void) {
 }
 
 
+static void collect_into(uint16_t dst[32][64]) {
+    for (uint8_t r=0; r<32; r++) {
+        for (uint8_t c=0; c<64; c++) {
+            // select row/col
+        	uint8_t mapped_col = MapColumnIndex(c); // Map logical to physical column
+        	ADG732_SelectChannel2(mapped_col, r);
+            // settle
+        	delay_us(DELAY_MicroSec);
+            // read ADC
+        	uint16_t adc_val;
+			Read_ADC_Channel0();
+			adc_val = Read_ADC_Channel0();  // Always read
+            dst[r][c] = adc_val;
+        }
+    }
+}
+
+
+
 // Collect pressure readings
 void Collect_Dummy_Pressure_Readings(void) {
     for (uint8_t row = 0; row < 32; row++) {			// 0 to 32
@@ -659,8 +692,11 @@ int main(void)
 
 
 
-  Collect_Dummy_Pressure_Readings();
+  //Collect_Dummy_Pressure_Readings();
+  Collect_Pressure_Readings();
   HAL_SPI_TransmitReceive_IT(&hspi1, (uint8_t*)&pressure_readings, (uint8_t *)&dummy_receive, sizeof(pressure_readings));
+  // arm first transfer
+  //HAL_SPI_TransmitReceive_IT(&hspi1, (uint8_t*)tx_buf, (uint8_t*)dummy_receive, sizeof(bufA));
 
   /* USER CODE END 2 */
 
@@ -672,10 +708,22 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
+      // Fill the background buffer while SPI can serve the current one
+//      collect_into((uint16_t (*)[64])fill_buf);   // your 32x64 scan
+//      __DMB();                                    // memory barrier
+//      frame_ready = 1;                            // publish new frame
+      // (optional small delay)
+
 	  //Collect_Pressure_Readings();    // Collect readings from the 8x8 matrix
 	  //Transmit_Pressure_Readings_RowChunks();
 
-	  HAL_Delay(100);  // Delay between each full scan to avoid overflow
+	  if (need_scan == 1) {
+		  Collect_Pressure_Readings();
+
+		  need_scan = 0;
+	  }
+
+	  HAL_Delay(1);  // Delay between each full scan to avoid overflow
   }
   /* USER CODE END 3 */
 }
@@ -875,27 +923,54 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+//void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi) {
+//    if (hspi->Instance == SPI1) {
+//        //HAL_UART_Transmit(&huart1, (uint8_t *)"Request Received: ", 18, HAL_MAX_DELAY);
+//        //HAL_UART_Transmit(&huart1, rx_buffer, SPI_MSG_LEN, HAL_MAX_DELAY);
+//        //HAL_UART_Transmit(&huart1, (uint8_t *)&dummy_receive[1][1], sizeof(dummy_receive[1][1]), HAL_MAX_DELAY);
+//        //HAL_UART_Transmit(&huart1, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
+//
+//        //char msg[32];
+//        //sprintf(msg, "Value: %u\r\n", dummy_receive[1][1]);
+//        //HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+//
+//        // re-arm the transfer
+//        //HAL_SPI_TransmitReceive_IT(&hspi1, slave_response, rx_buffer, SPI_MSG_LEN);
+//        //HAL_SPI_TransmitReceive_IT(&hspi1, (uint8_t*)pressure_readings, (uint8_t *)dummy_receive, sizeof(pressure_readings));
+//        //HAL_SPI_TransmitReceive_IT(&hspi1, (uint8_t*)&pressure_readings[1][1], (uint8_t *)&dummy_receive[1][1], sizeof(pressure_readings[1][1]));
+//    	//Collect_Pressure_Readings();
+//    	//Collect_Dummy_Pressure_Readings();
+//        HAL_SPI_TransmitReceive_IT(&hspi1, (uint8_t*)&pressure_readings, (uint8_t *)&dummy_receive, sizeof(pressure_readings));
+//        Collect_Pressure_Readings();
+//    }
+//}
+
+//// ----- callback (VERY SHORT) -----
+//void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi) {
+//    if (hspi->Instance == SPI1) {
+//        if (frame_ready) {                  // a new frame is ready?
+//            // swap buffers
+//            uint16_t (*tmp)[64] = (uint16_t (*)[64])tx_buf;
+//            tx_buf   = fill_buf;
+//            fill_buf = tmp;
+//            frame_ready = 0;
+//        }
+//        // re-arm SPI immediately with the current tx_buf
+//        HAL_SPI_TransmitReceive_IT(&hspi1,
+//            (uint8_t*)tx_buf, (uint8_t*)dummy_receive, sizeof(bufA));
+//    }
+//}
+
 void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi) {
     if (hspi->Instance == SPI1) {
-        //HAL_UART_Transmit(&huart1, (uint8_t *)"Request Received: ", 18, HAL_MAX_DELAY);
-        //HAL_UART_Transmit(&huart1, rx_buffer, SPI_MSG_LEN, HAL_MAX_DELAY);
-        //HAL_UART_Transmit(&huart1, (uint8_t *)&dummy_receive[1][1], sizeof(dummy_receive[1][1]), HAL_MAX_DELAY);
-        //HAL_UART_Transmit(&huart1, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
-
-        //char msg[32];
-        //sprintf(msg, "Value: %u\r\n", dummy_receive[1][1]);
-        //HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-
-        // re-arm the transfer
-        //HAL_SPI_TransmitReceive_IT(&hspi1, slave_response, rx_buffer, SPI_MSG_LEN);
-        //HAL_SPI_TransmitReceive_IT(&hspi1, (uint8_t*)pressure_readings, (uint8_t *)dummy_receive, sizeof(pressure_readings));
-        //HAL_SPI_TransmitReceive_IT(&hspi1, (uint8_t*)&pressure_readings[1][1], (uint8_t *)&dummy_receive[1][1], sizeof(pressure_readings[1][1]));
-    	//Collect_Pressure_Readings();
-    	//Collect_Dummy_Pressure_Readings();
-        HAL_SPI_TransmitReceive_IT(&hspi1, (uint8_t*)&pressure_readings, (uint8_t *)&dummy_receive, sizeof(pressure_readings));
-        Collect_Pressure_Readings();
+        HAL_SPI_TransmitReceive_IT(&hspi1,
+            (uint8_t*)&pressure_readings, (uint8_t*)&dummy_receive,
+            sizeof(pressure_readings));                 // re-arm immediately
+        // now do NOT block here; kick a flag for the main loop to scan
+        need_scan = 1;
     }
 }
+
 
 /* USER CODE END 4 */
 
