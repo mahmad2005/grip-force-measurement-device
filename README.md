@@ -53,7 +53,24 @@ The system enables clinicians and researchers to:
 > 📍 *This project is part of ongoing research in neuromuscular assessment and assistive rehabilitation technology.*
 
 
-## 🔧 New Design
+## � Developer Docs and Quick Start
+
+- Protocol and wiring details (pins, SPI/UDP framing): `docs/System_Protocol_and_Wiring.md`
+- Hardware overview and BOM highlights: `hardware/README.md`
+
+Visualizer quick start (Windows cmd):
+
+1) Install Python packages
+  - Open a terminal and run:
+    - `python -m pip install -r software\requirements.txt`
+2) Set your listen IP/port in `software\viz_config.json` if needed (defaults to 0.0.0.0:12345)
+3) Run the visualizer
+  - `python software\run_visualizer.py`
+
+Make sure the ESP32 sketch `firmware/esp32/ESP32_C3_Zero_SPI_2048_UDP.ino` has `udpAddress` set to your PC’s IP.
+
+
+## �🔧 New Design
 
 This section features the redesigned pressure sensor and control PCB with updated layout and schematic.
 
