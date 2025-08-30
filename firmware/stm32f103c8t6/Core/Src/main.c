@@ -693,10 +693,20 @@ int main(void)
 
 
   //Collect_Dummy_Pressure_Readings();
-  Collect_Pressure_Readings();
-  HAL_SPI_TransmitReceive_IT(&hspi1, (uint8_t*)&pressure_readings, (uint8_t *)&dummy_receive, sizeof(pressure_readings));
+//  Collect_Pressure_Readings();
+//  HAL_SPI_TransmitReceive_IT(&hspi1, (uint8_t*)&pressure_readings, (uint8_t *)&dummy_receive, sizeof(pressure_readings));
   // arm first transfer
   //HAL_SPI_TransmitReceive_IT(&hspi1, (uint8_t*)tx_buf, (uint8_t*)dummy_receive, sizeof(bufA));
+
+  //updated on 29 August 2025
+  // Start the first scan in the background (optional)
+  __DMB();
+  frame_ready = 0;  // no new frame yet
+
+  // Arm first SPI transfer with the TX buffer
+  HAL_SPI_TransmitReceive_IT(&hspi1,
+      (uint8_t*)tx_buf, (uint8_t*)dummy_receive, sizeof(bufA));
+
 
   /* USER CODE END 2 */
 
@@ -717,13 +727,20 @@ int main(void)
 	  //Collect_Pressure_Readings();    // Collect readings from the 8x8 matrix
 	  //Transmit_Pressure_Readings_RowChunks();
 
-	  if (need_scan == 1) {
-		  Collect_Pressure_Readings();
 
-		  need_scan = 0;
-	  }
+//	  if (need_scan == 1) {					//before 29 august 2025
+//		  Collect_Pressure_Readings();
+//
+//		  need_scan = 0;
+//	  }
+//
+//	  HAL_Delay(1);  // Delay between each full scan to avoid overflow
 
-	  HAL_Delay(1);  // Delay between each full scan to avoid overflow
+	collect_into((uint16_t (*)[64])fill_buf);  // scan whole 32x64 into the background buffer
+	__DMB();                                   // memory barrier before publishing
+	frame_ready = 1;                           // signal “new frame ready for TX”
+	// (optional) HAL_Delay(1);
+
   }
   /* USER CODE END 3 */
 }
@@ -961,15 +978,31 @@ static void MX_GPIO_Init(void)
 //    }
 //}
 
+//void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi) {
+//    if (hspi->Instance == SPI1) {
+//        HAL_SPI_TransmitReceive_IT(&hspi1,
+//            (uint8_t*)&pressure_readings, (uint8_t*)&dummy_receive,
+//            sizeof(pressure_readings));                 // re-arm immediately
+//        // now do NOT block here; kick a flag for the main loop to scan
+//        need_scan = 1;
+//    }
+//}
+
+// new ISR function 29 August 2025
 void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi) {
     if (hspi->Instance == SPI1) {
+        if (frame_ready) {   // publish the freshly scanned frame atomically
+            uint16_t (*tmp)[64] = (uint16_t (*)[64])tx_buf;
+            tx_buf   = fill_buf;
+            fill_buf = tmp;
+            frame_ready = 0;
+        }
+        // re-arm immediately with the current tx_buf
         HAL_SPI_TransmitReceive_IT(&hspi1,
-            (uint8_t*)&pressure_readings, (uint8_t*)&dummy_receive,
-            sizeof(pressure_readings));                 // re-arm immediately
-        // now do NOT block here; kick a flag for the main loop to scan
-        need_scan = 1;
+            (uint8_t*)tx_buf, (uint8_t*)dummy_receive, sizeof(bufA));
     }
 }
+
 
 
 /* USER CODE END 4 */
