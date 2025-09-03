@@ -172,7 +172,7 @@ void UD_GPIO_Init(void) {
 
 
 // Initialize ADC1 on Channel 0
-void ADC1_Init(void) {
+/*void ADC1_Init(void) {
     __HAL_RCC_ADC1_CLK_ENABLE();
 
     ADC_HandleTypeDef hadc1;
@@ -202,7 +202,37 @@ uint16_t Read_ADC_Channel0(void) {
     HAL_ADC_Stop(&hadc1);
 
     return adc_value;
+}*/
+
+// GLOBAL hadc1 is already declared at file scope
+
+void ADC1_Init(void) {
+    __HAL_RCC_ADC1_CLK_ENABLE();
+
+    hadc1.Instance = ADC1;                       // <-- use GLOBAL
+    hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
+    hadc1.Init.ContinuousConvMode = DISABLE;
+    hadc1.Init.DiscontinuousConvMode = DISABLE;
+    hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+    hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+    hadc1.Init.NbrOfConversion = 1;
+    HAL_ADC_Init(&hadc1);
+
+    ADC_ChannelConfTypeDef sConfig = {0};
+    sConfig.Channel = ADC_CHANNEL_0;
+    sConfig.Rank = ADC_REGULAR_RANK_1;
+    sConfig.SamplingTime = ADC_SAMPLETIME_28CYCLES_5; // give the mux time
+    HAL_ADC_ConfigChannel(&hadc1, &sConfig);
 }
+
+uint16_t Read_ADC_Channel0(void) {
+    HAL_ADC_Start(&hadc1);                        // <-- use GLOBAL
+    HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+    uint16_t v = HAL_ADC_GetValue(&hadc1);
+    HAL_ADC_Stop(&hadc1);
+    return v;
+}
+
 
 // Initialize USART1 for UART communication
 void USART1_Init(void) {

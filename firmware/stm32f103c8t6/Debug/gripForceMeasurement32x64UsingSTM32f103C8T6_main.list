@@ -27,25 +27,25 @@ Idx Name          Size      VMA       LMA       File off  Algn
                   ALLOC
  11 .ARM.attributes 00000029  00000000  00000000  00005014  2**0
                   CONTENTS, READONLY
- 12 .debug_info   0000a9ab  00000000  00000000  0000503d  2**0
+ 12 .debug_info   0000a98f  00000000  00000000  0000503d  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 13 .debug_abbrev 00001d4e  00000000  00000000  0000f9e8  2**0
+ 13 .debug_abbrev 00001d5f  00000000  00000000  0000f9cc  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 14 .debug_aranges 00000a50  00000000  00000000  00011738  2**3
+ 14 .debug_aranges 00000a50  00000000  00000000  00011730  2**3
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 15 .debug_rnglists 000007f2  00000000  00000000  00012188  2**0
+ 15 .debug_rnglists 000007f3  00000000  00000000  00012180  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 16 .debug_macro  000178c9  00000000  00000000  0001297a  2**0
+ 16 .debug_macro  000178c9  00000000  00000000  00012973  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 17 .debug_line   0000c3b8  00000000  00000000  0002a243  2**0
+ 17 .debug_line   0000c3b8  00000000  00000000  0002a23c  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 18 .debug_str    00088c06  00000000  00000000  000365fb  2**0
+ 18 .debug_str    00088bfc  00000000  00000000  000365f4  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 19 .comment      00000043  00000000  00000000  000bf201  2**0
+ 19 .comment      00000043  00000000  00000000  000bf1f0  2**0
                   CONTENTS, READONLY
- 20 .debug_frame  000029bc  00000000  00000000  000bf244  2**2
+ 20 .debug_frame  000029bc  00000000  00000000  000bf234  2**2
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 21 .debug_line_str 00000083  00000000  00000000  000c1c00  2**0
+ 21 .debug_line_str 00000083  00000000  00000000  000c1bf0  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
 
 Disassembly of section .text:
@@ -208,120 +208,120 @@ void UD_GPIO_Init(void) {
  8000224:	40011000 	.word	0x40011000
 
 08000228 <ADC1_Init>:
+    return adc_value;
+}*/
 
+// GLOBAL hadc1 is already declared at file scope
 
-// Initialize ADC1 on Channel 0
 void ADC1_Init(void) {
  8000228:	b580      	push	{r7, lr}
- 800022a:	b090      	sub	sp, #64	@ 0x40
+ 800022a:	b084      	sub	sp, #16
  800022c:	af00      	add	r7, sp, #0
     __HAL_RCC_ADC1_CLK_ENABLE();
- 800022e:	4b1a      	ldr	r3, [pc, #104]	@ (8000298 <ADC1_Init+0x70>)
+ 800022e:	4b1c      	ldr	r3, [pc, #112]	@ (80002a0 <ADC1_Init+0x78>)
  8000230:	699b      	ldr	r3, [r3, #24]
- 8000232:	4a19      	ldr	r2, [pc, #100]	@ (8000298 <ADC1_Init+0x70>)
+ 8000232:	4a1b      	ldr	r2, [pc, #108]	@ (80002a0 <ADC1_Init+0x78>)
  8000234:	f443 7300 	orr.w	r3, r3, #512	@ 0x200
  8000238:	6193      	str	r3, [r2, #24]
- 800023a:	4b17      	ldr	r3, [pc, #92]	@ (8000298 <ADC1_Init+0x70>)
+ 800023a:	4b19      	ldr	r3, [pc, #100]	@ (80002a0 <ADC1_Init+0x78>)
  800023c:	699b      	ldr	r3, [r3, #24]
  800023e:	f403 7300 	and.w	r3, r3, #512	@ 0x200
  8000242:	603b      	str	r3, [r7, #0]
  8000244:	683b      	ldr	r3, [r7, #0]
 
-    ADC_HandleTypeDef hadc1;
-    hadc1.Instance = ADC1;
- 8000246:	4b15      	ldr	r3, [pc, #84]	@ (800029c <ADC1_Init+0x74>)
- 8000248:	613b      	str	r3, [r7, #16]
+    hadc1.Instance = ADC1;                       // <-- use GLOBAL
+ 8000246:	4b17      	ldr	r3, [pc, #92]	@ (80002a4 <ADC1_Init+0x7c>)
+ 8000248:	4a17      	ldr	r2, [pc, #92]	@ (80002a8 <ADC1_Init+0x80>)
+ 800024a:	601a      	str	r2, [r3, #0]
     hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
- 800024a:	2300      	movs	r3, #0
- 800024c:	61bb      	str	r3, [r7, #24]
+ 800024c:	4b15      	ldr	r3, [pc, #84]	@ (80002a4 <ADC1_Init+0x7c>)
+ 800024e:	2200      	movs	r2, #0
+ 8000250:	609a      	str	r2, [r3, #8]
     hadc1.Init.ContinuousConvMode = DISABLE;
- 800024e:	2300      	movs	r3, #0
- 8000250:	773b      	strb	r3, [r7, #28]
+ 8000252:	4b14      	ldr	r3, [pc, #80]	@ (80002a4 <ADC1_Init+0x7c>)
+ 8000254:	2200      	movs	r2, #0
+ 8000256:	731a      	strb	r2, [r3, #12]
     hadc1.Init.DiscontinuousConvMode = DISABLE;
- 8000252:	2300      	movs	r3, #0
- 8000254:	f887 3024 	strb.w	r3, [r7, #36]	@ 0x24
+ 8000258:	4b12      	ldr	r3, [pc, #72]	@ (80002a4 <ADC1_Init+0x7c>)
+ 800025a:	2200      	movs	r2, #0
+ 800025c:	751a      	strb	r2, [r3, #20]
     hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
- 8000258:	f44f 2360 	mov.w	r3, #917504	@ 0xe0000
- 800025c:	62fb      	str	r3, [r7, #44]	@ 0x2c
+ 800025e:	4b11      	ldr	r3, [pc, #68]	@ (80002a4 <ADC1_Init+0x7c>)
+ 8000260:	f44f 2260 	mov.w	r2, #917504	@ 0xe0000
+ 8000264:	61da      	str	r2, [r3, #28]
     hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
- 800025e:	2300      	movs	r3, #0
- 8000260:	617b      	str	r3, [r7, #20]
+ 8000266:	4b0f      	ldr	r3, [pc, #60]	@ (80002a4 <ADC1_Init+0x7c>)
+ 8000268:	2200      	movs	r2, #0
+ 800026a:	605a      	str	r2, [r3, #4]
     hadc1.Init.NbrOfConversion = 1;
- 8000262:	2301      	movs	r3, #1
- 8000264:	623b      	str	r3, [r7, #32]
+ 800026c:	4b0d      	ldr	r3, [pc, #52]	@ (80002a4 <ADC1_Init+0x7c>)
+ 800026e:	2201      	movs	r2, #1
+ 8000270:	611a      	str	r2, [r3, #16]
     HAL_ADC_Init(&hadc1);
- 8000266:	f107 0310 	add.w	r3, r7, #16
- 800026a:	4618      	mov	r0, r3
- 800026c:	f000 fe66 	bl	8000f3c <HAL_ADC_Init>
+ 8000272:	480c      	ldr	r0, [pc, #48]	@ (80002a4 <ADC1_Init+0x7c>)
+ 8000274:	f000 fe62 	bl	8000f3c <HAL_ADC_Init>
 
     ADC_ChannelConfTypeDef sConfig = {0};
- 8000270:	1d3b      	adds	r3, r7, #4
- 8000272:	2200      	movs	r2, #0
- 8000274:	601a      	str	r2, [r3, #0]
- 8000276:	605a      	str	r2, [r3, #4]
- 8000278:	609a      	str	r2, [r3, #8]
+ 8000278:	1d3b      	adds	r3, r7, #4
+ 800027a:	2200      	movs	r2, #0
+ 800027c:	601a      	str	r2, [r3, #0]
+ 800027e:	605a      	str	r2, [r3, #4]
+ 8000280:	609a      	str	r2, [r3, #8]
     sConfig.Channel = ADC_CHANNEL_0;
- 800027a:	2300      	movs	r3, #0
- 800027c:	607b      	str	r3, [r7, #4]
+ 8000282:	2300      	movs	r3, #0
+ 8000284:	607b      	str	r3, [r7, #4]
     sConfig.Rank = ADC_REGULAR_RANK_1;
- 800027e:	2301      	movs	r3, #1
- 8000280:	60bb      	str	r3, [r7, #8]
+ 8000286:	2301      	movs	r3, #1
+ 8000288:	60bb      	str	r3, [r7, #8]
+    sConfig.SamplingTime = ADC_SAMPLETIME_28CYCLES_5; // give the mux time
+ 800028a:	2303      	movs	r3, #3
+ 800028c:	60fb      	str	r3, [r7, #12]
     HAL_ADC_ConfigChannel(&hadc1, &sConfig);
- 8000282:	1d3a      	adds	r2, r7, #4
- 8000284:	f107 0310 	add.w	r3, r7, #16
- 8000288:	4611      	mov	r1, r2
- 800028a:	4618      	mov	r0, r3
- 800028c:	f001 f91a 	bl	80014c4 <HAL_ADC_ConfigChannel>
+ 800028e:	1d3b      	adds	r3, r7, #4
+ 8000290:	4619      	mov	r1, r3
+ 8000292:	4804      	ldr	r0, [pc, #16]	@ (80002a4 <ADC1_Init+0x7c>)
+ 8000294:	f001 f916 	bl	80014c4 <HAL_ADC_ConfigChannel>
 }
- 8000290:	bf00      	nop
- 8000292:	3740      	adds	r7, #64	@ 0x40
- 8000294:	46bd      	mov	sp, r7
- 8000296:	bd80      	pop	{r7, pc}
- 8000298:	40021000 	.word	0x40021000
- 800029c:	40012400 	.word	0x40012400
+ 8000298:	bf00      	nop
+ 800029a:	3710      	adds	r7, #16
+ 800029c:	46bd      	mov	sp, r7
+ 800029e:	bd80      	pop	{r7, pc}
+ 80002a0:	40021000 	.word	0x40021000
+ 80002a4:	20000030 	.word	0x20000030
+ 80002a8:	40012400 	.word	0x40012400
 
-080002a0 <Read_ADC_Channel0>:
+080002ac <Read_ADC_Channel0>:
 
-// Read ADC value from Channel 0
 uint16_t Read_ADC_Channel0(void) {
- 80002a0:	b580      	push	{r7, lr}
- 80002a2:	b08e      	sub	sp, #56	@ 0x38
- 80002a4:	af00      	add	r7, sp, #0
-    ADC_HandleTypeDef hadc1;
-    hadc1.Instance = ADC1;
- 80002a6:	4b0d      	ldr	r3, [pc, #52]	@ (80002dc <Read_ADC_Channel0+0x3c>)
- 80002a8:	607b      	str	r3, [r7, #4]
-
-    HAL_ADC_Start(&hadc1);
- 80002aa:	1d3b      	adds	r3, r7, #4
- 80002ac:	4618      	mov	r0, r3
- 80002ae:	f000 ff1d 	bl	80010ec <HAL_ADC_Start>
+ 80002ac:	b580      	push	{r7, lr}
+ 80002ae:	b082      	sub	sp, #8
+ 80002b0:	af00      	add	r7, sp, #0
+    HAL_ADC_Start(&hadc1);                        // <-- use GLOBAL
+ 80002b2:	480a      	ldr	r0, [pc, #40]	@ (80002dc <Read_ADC_Channel0+0x30>)
+ 80002b4:	f000 ff1a 	bl	80010ec <HAL_ADC_Start>
     HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
- 80002b2:	1d3b      	adds	r3, r7, #4
- 80002b4:	f04f 31ff 	mov.w	r1, #4294967295
- 80002b8:	4618      	mov	r0, r3
- 80002ba:	f000 fff1 	bl	80012a0 <HAL_ADC_PollForConversion>
-    uint16_t adc_value = HAL_ADC_GetValue(&hadc1);
- 80002be:	1d3b      	adds	r3, r7, #4
- 80002c0:	4618      	mov	r0, r3
- 80002c2:	f001 f8f3 	bl	80014ac <HAL_ADC_GetValue>
- 80002c6:	4603      	mov	r3, r0
- 80002c8:	86fb      	strh	r3, [r7, #54]	@ 0x36
+ 80002b8:	f04f 31ff 	mov.w	r1, #4294967295
+ 80002bc:	4807      	ldr	r0, [pc, #28]	@ (80002dc <Read_ADC_Channel0+0x30>)
+ 80002be:	f000 ffef 	bl	80012a0 <HAL_ADC_PollForConversion>
+    uint16_t v = HAL_ADC_GetValue(&hadc1);
+ 80002c2:	4806      	ldr	r0, [pc, #24]	@ (80002dc <Read_ADC_Channel0+0x30>)
+ 80002c4:	f001 f8f2 	bl	80014ac <HAL_ADC_GetValue>
+ 80002c8:	4603      	mov	r3, r0
+ 80002ca:	80fb      	strh	r3, [r7, #6]
     HAL_ADC_Stop(&hadc1);
- 80002ca:	1d3b      	adds	r3, r7, #4
- 80002cc:	4618      	mov	r0, r3
+ 80002cc:	4803      	ldr	r0, [pc, #12]	@ (80002dc <Read_ADC_Channel0+0x30>)
  80002ce:	f000 ffbb 	bl	8001248 <HAL_ADC_Stop>
-
-    return adc_value;
- 80002d2:	8efb      	ldrh	r3, [r7, #54]	@ 0x36
+    return v;
+ 80002d2:	88fb      	ldrh	r3, [r7, #6]
 }
  80002d4:	4618      	mov	r0, r3
- 80002d6:	3738      	adds	r7, #56	@ 0x38
+ 80002d6:	3708      	adds	r7, #8
  80002d8:	46bd      	mov	sp, r7
  80002da:	bd80      	pop	{r7, pc}
- 80002dc:	40012400 	.word	0x40012400
+ 80002dc:	20000030 	.word	0x20000030
 
 080002e0 <USART1_Init>:
+
 
 // Initialize USART1 for UART communication
 void USART1_Init(void) {
@@ -998,9 +998,9 @@ static void collect_into(uint16_t dst[32][64]) {
             // read ADC
         	uint16_t adc_val;
 			Read_ADC_Channel0();
- 8000776:	f7ff fd93 	bl	80002a0 <Read_ADC_Channel0>
+ 8000776:	f7ff fd99 	bl	80002ac <Read_ADC_Channel0>
 			adc_val = Read_ADC_Channel0();  // Always read
- 800077a:	f7ff fd91 	bl	80002a0 <Read_ADC_Channel0>
+ 800077a:	f7ff fd97 	bl	80002ac <Read_ADC_Channel0>
  800077e:	4603      	mov	r3, r0
  8000780:	817b      	strh	r3, [r7, #10]
             dst[r][c] = adc_val;
