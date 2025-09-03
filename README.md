@@ -117,4 +117,9 @@ These photos show physical testing and assembly steps:
 |---------------------|------------------------|
 | ![Sensor Pad](hardware/previous%20design/images/32x64_sensorPad.jpeg) | ![Demo Setup](hardware/previous%20design/images/pressureSensingDemostration.jpeg) |
 
+## Application View
+
+Below is a sample visualization of the grip force device showing the **32×64 pressure map** along with gyroscope, accelerometer, and magnetometer data:
+
+![Application View](app/app_view.png)
 
