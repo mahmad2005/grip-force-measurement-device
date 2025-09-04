@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-viz_full_with_gyro_accel_mag.py — 32×64 grip-pressure visualizer + IMU (gyro/accel/mag)
+viz_full_with_gyro_accel_mag_3Dobj.py — 32×64 grip-pressure visualizer + IMU (gyro/accel/mag) + optional 3D shape (cylinder)
 
 Reads multiple packet types over the SAME UDP socket:
 1) Pressure chunks (10 × 415B) -> assemble 32×64 frame (kept identical)
@@ -10,7 +10,7 @@ Reads multiple packet types over the SAME UDP socket:
    - b'\xAA\x55GY' + 6*int16 (BE) = gyroXYZ, accelXYZ (fallback)
 
 Run:
-  python viz_full_with_gyro_accel_mag.py --ip 0.0.0.0 --port 12345 --buffer 800 --show-magnitude
+    python viz_full_with_gyro_accel_mag_3Dobj.py --ip 0.0.0.0 --port 12345 --buffer 800 --show-magnitude --show-3d
 """
 
 import argparse
@@ -19,6 +19,7 @@ import time
 import struct
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib import cm
 from matplotlib.animation import FuncAnimation
 from collections import deque
 from matplotlib.gridspec import GridSpec
@@ -139,8 +140,9 @@ plt.rcParams["toolbar"] = "toolbar2"
 
 # Use constrained_layout to avoid tight_layout warning
 if args.show_3d:
-    fig = plt.figure(figsize=(11.0, 11.2), constrained_layout=True)
-    gs = GridSpec(nrows=5, ncols=1, height_ratios=[4.3, 1.0, 1.0, 1.0, 2.4], figure=fig)
+    # Wider figure; left column identical sizing for pressure + time-series, right column reserved for 3D object.
+    fig = plt.figure(figsize=(15.5, 9.2), constrained_layout=True)
+    gs = GridSpec(nrows=4, ncols=2, height_ratios=[4.3, 1.1, 1.1, 1.1], width_ratios=[5.0, 2.2], figure=fig)
 else:
     fig = plt.figure(figsize=(11.0, 9.2), constrained_layout=True)
     gs = GridSpec(nrows=4, ncols=1, height_ratios=[4.3, 1.1, 1.1, 1.1], figure=fig)
@@ -202,28 +204,45 @@ axM.legend(loc="upper right")
 
 # (5) Optional 3D orientation
 if args.show_3d:
-    ax3d = fig.add_subplot(gs[4, 0], projection='3d')
-    ax3d.set_title("3D Orientation")
-    ax3d.set_xlim([-1, 1]); ax3d.set_ylim([-1, 1]); ax3d.set_zlim([-1, 1])
+    # 3D axis spans all rows in right column without affecting pressure size.
+    ax3d = fig.add_subplot(gs[:, 1], projection='3d')
+    ax3d.set_title("3D Orientation (Cylinder)")
+    ax3d.set_xlim([-1, 1]); ax3d.set_ylim([-1, 1]); ax3d.set_zlim([-1.2, 1.2])
     ax3d.set_xlabel("X"); ax3d.set_ylabel("Y"); ax3d.set_zlabel("Z")
-    # Base cube geometry
-    cube_vertices_base = np.array([
-        [-0.5, -0.5, -0.5],
-        [ 0.5, -0.5, -0.5],
-        [ 0.5,  0.5, -0.5],
-        [-0.5,  0.5, -0.5],
-        [-0.5, -0.5,  0.5],
-        [ 0.5, -0.5,  0.5],
-        [ 0.5,  0.5,  0.5],
-        [-0.5,  0.5,  0.5],
-    ], dtype=float)
-    cube_faces = [
-        [0,1,2,3], [4,5,6,7], [0,1,5,4], [2,3,7,6], [0,3,7,4], [1,2,6,5]
-    ]
-    face_colors = ['orange','red','blue','white','yellow','green']
-    cube_poly = Poly3DCollection([cube_vertices_base[f] for f in cube_faces],
-                                 facecolors=face_colors, edgecolors='k', linewidths=1, alpha=0.85)
-    ax3d.add_collection3d(cube_poly)
+    # Base cylinder geometry (height 2, radius 0.5) centered at origin (z from -1 to +1)
+    _CYL_SIDES = 36
+    theta = np.linspace(0, 2*np.pi, _CYL_SIDES, endpoint=False)
+    r = 0.5
+    # Bottom (z=-0.5) and top (z=+0.5) rings
+    bottom_ring = np.column_stack([r*np.cos(theta), r*np.sin(theta), np.full_like(theta, -1.0)])
+    top_ring    = np.column_stack([r*np.cos(theta), r*np.sin(theta), np.full_like(theta,  1.0)])
+    cyl_vertices_base = np.vstack([bottom_ring, top_ring])  # shape (2*_CYL_SIDES, 3)
+    # Faces: side quads + top cap + bottom cap
+    cyl_faces = []
+    # Side quads
+    for i in range(_CYL_SIDES):
+        j = (i + 1) % _CYL_SIDES
+        cyl_faces.append([i, j, _CYL_SIDES + j, _CYL_SIDES + i])
+    # Top cap (fan as single polygon using top ring order)
+    cyl_faces.append(list(range(_CYL_SIDES, 2*_CYL_SIDES)))
+    # Bottom cap (reverse order for outward normal)
+    cyl_faces.append(list(reversed(range(0, _CYL_SIDES))))
+    # Color scheme: use a hue gradient around the circumference so yaw-only rotation is visible.
+    side_face_colors = []
+    for i in range(_CYL_SIDES):
+        frac = i / _CYL_SIDES
+        rgba = list(cm.hsv(frac))  # returns RGBA
+        rgba[3] = 0.88  # set alpha
+        side_face_colors.append(tuple(rgba))
+    # Add a high-contrast reference stripe at face 0 (nearly white) to improve rotational perception
+    side_face_colors[0] = (0.98, 0.98, 0.98, 0.95)
+    # Top / bottom caps (darker neutral tones)
+    cap_top = (0.25, 0.25, 0.25, 0.9)
+    cap_bottom = (0.05, 0.05, 0.05, 0.9)
+    face_colors = side_face_colors + [cap_top, cap_bottom]
+    shape_poly = Poly3DCollection([cyl_vertices_base[f] for f in cyl_faces],
+                                  facecolors=face_colors, edgecolors='k', linewidths=0.4)
+    ax3d.add_collection3d(shape_poly)
     # Orientation state
     roll_deg = 0.0
     pitch_deg = 0.0
@@ -294,15 +313,15 @@ if args.show_3d:
         R_y = np.array([[cp,0,sp],[0,1,0],[-sp,0,cp]])
         R_z = np.array([[cy,-sy,0],[sy,cy,0],[0,0,1]])
         R = R_z @ R_y @ R_x
-        verts_rot = (R @ cube_vertices_base.T).T
-        cube_poly.set_verts([verts_rot[f] for f in cube_faces])
-        # Keep axes fixed
-        ax3d.set_xlim([-1,1]); ax3d.set_ylim([-1,1]); ax3d.set_zlim([-1,1])
+        verts_rot = (R @ cyl_vertices_base.T).T
+        # Update faces
+        shape_poly.set_verts([verts_rot[f] for f in cyl_faces])
+        ax3d.set_xlim([-1,1]); ax3d.set_ylim([-1,1]); ax3d.set_zlim([-1.2,1.2])
         ax3d.view_init(elev=20., azim=45.)
-        return cube_poly
+        return shape_poly
 else:
     # Placeholders so references won't break if flag off
-    cube_poly = None
+    shape_poly = None
     def _update_orientation_state(*_args, **_kwargs):
         return
     def _update_cube_artist():
@@ -501,7 +520,7 @@ def on_timer(_):
 
     # 3D cube update (if enabled)
     extra = []
-    if args.show_3d and cube_poly is not None:
+    if args.show_3d and shape_poly is not None:
         updated = _update_cube_artist()
         if updated is not None:
             extra.append(updated)
