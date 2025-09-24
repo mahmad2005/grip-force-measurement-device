@@ -77,7 +77,7 @@ This section features the redesigned pressure sensor and control PCB with update
 | Front View | Back View |
 |------------|------------|
 | ![3D View Front](hardware/pcb%20design/images/3dviewfront.png) | ![3D View Back](hardware/pcb%20design/images/3dviewback.png) |
-| ![3D View Front](hardware/pcb%20design/images/3dviewfront_pinted.png) | ![3D View Back](hardware/pcb%20design/images/3dviewback_pinted.png) |
+| ![3D View Front](hardware/pcb%20design/images/3dviewfront_printed.png) | ![3D View Back](hardware/pcb%20design/images/3dviewback_printed.png) |
 
 ### 🧩 Schematic
 
