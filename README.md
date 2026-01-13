@@ -124,3 +124,15 @@ Below is a sample visualization of the grip force device showing the **32×64 pr
 
 ![Application View](app/app_view.png)
 
+## 🎥 Demonstration Video
+
+[![Real-Time AprilTag Cylinder Tracking](https://img.youtube.com/vi/EXzzfofSnuo/0.jpg)](https://www.youtube.com/watch?v=EXzzfofSnuo)
+
+**Real-Time AprilTag Cylinder Tracking with 2D/3D Overlap Visualization**
+
+Click the image above to watch the demonstration video on YouTube.
+
+## 📄 Video Description
+
+This video demonstrates a **real-time vision-based tracking system** using **AprilTags** to estimate and visualize the position of a cylindrical object.  
+The system overlays **2D and 3D representations** to show precise alignment and movement tracking, supporting validation of object trajectory and spatial accuracy for experimental and rehabilitation-focused applications.
