@@ -11,6 +11,16 @@ This project provides a real-time visualization system for a 32×64 grip pressur
 - Optional CSV logging
 - Simulator for development/testing without hardware
 
+### Screenshots
+
+3D simulator view:
+
+![3D simulator view](3dsimulator_view.png)
+
+App view:
+
+![App view](app_view.png)
+
 ---
 
 ## How to Use
