@@ -17,10 +17,12 @@ import argparse
 import socket
 import time
 import struct
+import json
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.animation import FuncAnimation
+from matplotlib.widgets import Button
 from collections import deque
 from matplotlib.gridspec import GridSpec
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 (imported for 3D projection)
@@ -36,6 +38,7 @@ parser.add_argument("--buffer", type=int, default=800, help="IMU sliding window"
 parser.add_argument("--show-magnitude", action="store_true", help="Plot magnitudes for gyro/accel/mag")
 parser.add_argument("--save-csv", default="", help="Optional CSV log (IMU only)")
 parser.add_argument("--show-3d", action="store_true", help="Show 3D orientation cube (computed from gyro/accel/mag)")
+parser.add_argument("--save-session-json", default="", help="Optional NDJSON log for pressure+IMU replay in web viewer")
 args, _ = parser.parse_known_args()
 
 # -----------------------------
@@ -48,8 +51,9 @@ CHUNKS_PER_FRAME = 10
 VALUES_PER_CHUNK = 205
 BYTES_PER_PACKET = 415
 
-UDP_DRAIN_PER_TICK = 140
-ANIM_INTERVAL_MS = 10
+UDP_DRAIN_PER_TICK = 64
+ANIM_INTERVAL_MS = 33
+IMU_AUTOSCALE_EVERY_N = 3
 
 # Timeouts
 FRAME_TIMEOUT_S = 0.20
@@ -59,10 +63,43 @@ STREAM_SILENCE_RESET_S = 1.5
 VMIN, VMAX = 0, 4095
 USE_AUTO_CLIM = False
 
+
+# -----------------------------
 # Geometry transforms
+# -----------------------------
 APPLY_FLIP_LR = False
 ROTATE_K = 2                      # 0,1,2,3
-APPLY_HALF_MIRROR = True          # mirror left half only
+APPLY_HALF_MIRROR = False          # mirror left half only
+
+# -----------------------------
+# Sensor/cylinder geometry config (edit here)
+# -----------------------------
+
+# ====== SENSOR/CYLINDER CONFIGURATION ======
+SENSOR_ROWS = 32                  # Number of sensor rows (height direction)
+SENSOR_COLS = 64                  # Number of sensor columns (circumference direction)
+SENSOR_COVERAGE_DEG = 300         # Typical: 300 (sensor wrap angle in degrees)
+CABLE_GAP_DEG = 60                # Typical: 60 (gap angle in degrees)
+CABLE_GAP_CENTER_DEG = 180        # Typical: 180 (gap centered at back, Y negative)
+GAP_COLOR = "black"               # Color for cable gap (edit for appearance)
+CYL_RADIUS = 0.5                  # Cylinder radius (edit for size)
+CYL_HEIGHT = 2.0                  # Cylinder height (edit for size)
+CYL_SIDES = 72                    # Number of mesh sides (higher = smoother, but slower)
+PRESSURE_CMAP = "rainbow"         # Colormap for pressure overlay (edit for style)
+SHOW_3D_MESH_EDGES = False        # Set True for visible mesh lines (costs more GPU/CPU)
+# VMIN, VMAX already defined above for colormap scale
+#
+# To make the sensor overlay always visible from the default view:
+# - Keep CABLE_GAP_CENTER_DEG = 180 (gap at back)
+# - SENSOR_COVERAGE_DEG + CABLE_GAP_DEG should be 360
+#
+# If you want to test full coverage, set SENSOR_COVERAGE_DEG = 360, CABLE_GAP_DEG = 0
+
+# Comments:
+# - Adjust SENSOR_COVERAGE_DEG to match sensor wrap angle
+# - Adjust CABLE_GAP_DEG and CABLE_GAP_CENTER_DEG to move/resize the cable gap
+# - Adjust CYL_RADIUS and CYL_HEIGHT for cylinder size
+# - Adjust PRESSURE_CMAP, VMIN, VMAX for color mapping
 
 # Endianness handling for pressure payload
 ENDIAN_MODE = "AUTO"              # "AUTO" | "LE" | "BE"
@@ -101,6 +138,7 @@ frames_dropped = 0
 smoothed_fps = 0.0
 fps_window_start = time.time()
 fps_frames = 0
+imu_plot_tick = 0
 
 chosen_endian = ENDIAN_MODE  # "AUTO" | "LE" | "BE"
 
@@ -133,6 +171,66 @@ if args.save_csv:
 
 raw_dump_fp = None  # (placeholder, debug dump removed)
 
+# Optional NDJSON recording (one JSON object per line for streaming-safe writes).
+session_fp = None
+session_frame_idx = 0
+recording_enabled = False
+if args.save_session_json:
+    session_fp = open(args.save_session_json, "w", buffering=1)
+    session_fp.write(json.dumps({
+        "type": "meta",
+        "schema": "kinesiology.pressure_imu.ndjson.v1",
+        "created_unix_s": time.time(),
+        "frame_shape": [FRAME_H, FRAME_W],
+        "pressure_dtype": "uint16",
+        "pressure_layout": "row-major-flat",
+        "imu_units": {"gyro": "deg_s", "accel": "g", "mag": "uT"},
+    }) + "\n")
+    recording_enabled = True
+
+latest_imu = {
+    "t_rel_s": None,
+    "gx": None,
+    "gy": None,
+    "gz": None,
+    "ax": None,
+    "ay": None,
+    "az": None,
+    "mx": None,
+    "my": None,
+    "mz": None,
+    "has_mag": False,
+}
+
+latest_orientation = {
+    "roll_deg": 0.0,
+    "pitch_deg": 0.0,
+    "yaw_deg": 0.0,
+}
+
+
+def record_display_frame(mat: np.ndarray):
+    """Write one display frame plus latest IMU/orientation into NDJSON log."""
+    global session_frame_idx
+    if session_fp is None or not recording_enabled:
+        return
+
+    entry = {
+        "type": "frame",
+        "frame_idx": session_frame_idx,
+        "t_rel_s": time.time() - start_time,
+        "t_unix_s": time.time(),
+        "pressure_u16_flat": mat.astype(np.uint16, copy=False).reshape(-1).tolist(),
+        "imu": dict(latest_imu),
+        "orientation_deg": dict(latest_orientation),
+    }
+    session_fp.write(json.dumps(entry, separators=(",", ":")) + "\n")
+    session_frame_idx += 1
+
+    # Keep data durable on disk during longer runs without flushing every frame.
+    if (session_frame_idx % 30) == 0:
+        session_fp.flush()
+
 # -----------------------------
 # Matplotlib layout
 # -----------------------------
@@ -146,6 +244,17 @@ if args.show_3d:
 else:
     fig = plt.figure(figsize=(11.0, 9.2), constrained_layout=True)
     gs = GridSpec(nrows=4, ncols=1, height_ratios=[4.3, 1.1, 1.1, 1.1], figure=fig)
+
+
+def _safe_disable_layout_engine(*_args):
+    # Prevent constrained-layout callbacks from firing during teardown.
+    try:
+        fig.set_layout_engine("none")
+    except Exception:
+        pass
+
+
+fig.canvas.mpl_connect("close_event", _safe_disable_layout_engine)
 
 # (1) Pressure heatmap
 axP = fig.add_subplot(gs[0, 0])
@@ -165,6 +274,19 @@ unchanged_count = 0
 STUCK_THRESH = 30
 status_txt = axP.text(0.01, 0.02, "", color="w", transform=axP.transAxes,
                       fontsize=10, bbox=dict(facecolor="black", alpha=0.4, pad=3))
+
+# Optional recording toggle button (works when --save-session-json is provided).
+rec_btn = None
+if session_fp is not None:
+    ax_rec_btn = fig.add_axes([0.86, 0.94, 0.12, 0.045])
+    rec_btn = Button(ax_rec_btn, "REC: ON", color="#7f1111", hovercolor="#a01818")
+
+    def _toggle_recording(_event):
+        global recording_enabled
+        recording_enabled = not recording_enabled
+        rec_btn.label.set_text("REC: ON" if recording_enabled else "REC: OFF")
+
+    rec_btn.on_clicked(_toggle_recording)
 
 # (2) Gyro plot
 axG = fig.add_subplot(gs[1, 0])
@@ -207,42 +329,143 @@ if args.show_3d:
     # 3D axis spans all rows in right column without affecting pressure size.
     ax3d = fig.add_subplot(gs[:, 1], projection='3d')
     ax3d.set_title("3D Orientation (Cylinder)")
-    ax3d.set_xlim([-1, 1]); ax3d.set_ylim([-1, 1]); ax3d.set_zlim([-1.2, 1.2])
+    lim_xy = CYL_RADIUS * 2.0
+    lim_z = CYL_HEIGHT * 0.7
+    ax3d.set_xlim([-lim_xy, lim_xy]); ax3d.set_ylim([-lim_xy, lim_xy]); ax3d.set_zlim([-lim_z, lim_z])
     ax3d.set_xlabel("X"); ax3d.set_ylabel("Y"); ax3d.set_zlabel("Z")
-    # Base cylinder geometry (height 2, radius 0.5) centered at origin (z from -1 to +1)
-    _CYL_SIDES = 36
-    theta = np.linspace(0, 2*np.pi, _CYL_SIDES, endpoint=False)
-    r = 0.5
-    # Bottom (z=-0.5) and top (z=+0.5) rings
-    bottom_ring = np.column_stack([r*np.cos(theta), r*np.sin(theta), np.full_like(theta, -1.0)])
-    top_ring    = np.column_stack([r*np.cos(theta), r*np.sin(theta), np.full_like(theta,  1.0)])
-    cyl_vertices_base = np.vstack([bottom_ring, top_ring])  # shape (2*_CYL_SIDES, 3)
-    # Faces: side quads + top cap + bottom cap
-    cyl_faces = []
-    # Side quads
-    for i in range(_CYL_SIDES):
-        j = (i + 1) % _CYL_SIDES
-        cyl_faces.append([i, j, _CYL_SIDES + j, _CYL_SIDES + i])
-    # Top cap (fan as single polygon using top ring order)
-    cyl_faces.append(list(range(_CYL_SIDES, 2*_CYL_SIDES)))
-    # Bottom cap (reverse order for outward normal)
-    cyl_faces.append(list(reversed(range(0, _CYL_SIDES))))
-    # Color scheme: use a hue gradient around the circumference so yaw-only rotation is visible.
-    side_face_colors = []
-    for i in range(_CYL_SIDES):
-        frac = i / _CYL_SIDES
-        rgba = list(cm.hsv(frac))  # returns RGBA
-        rgba[3] = 0.88  # set alpha
-        side_face_colors.append(tuple(rgba))
-    # Add a high-contrast reference stripe at face 0 (nearly white) to improve rotational perception
-    side_face_colors[0] = (0.98, 0.98, 0.98, 0.95)
-    # Top / bottom caps (darker neutral tones)
-    cap_top = (0.25, 0.25, 0.25, 0.9)
-    cap_bottom = (0.05, 0.05, 0.05, 0.9)
-    face_colors = side_face_colors + [cap_top, cap_bottom]
-    shape_poly = Poly3DCollection([cyl_vertices_base[f] for f in cyl_faces],
-                                  facecolors=face_colors, edgecolors='k', linewidths=0.4)
-    ax3d.add_collection3d(shape_poly)
+    ax3d.set_box_aspect((1.0, 1.0, CYL_HEIGHT / max(CYL_RADIUS * 2.0, 1e-6)))
+
+    # --- Full cylinder mesh generation with explicit sensor/gap split ---
+    def _normalize_deg(a):
+        return a % 360.0
+
+    def _angular_distance_deg(a, b):
+        d = (a - b + 180.0) % 360.0 - 180.0
+        return abs(d)
+
+    def _is_gap_angle(theta_deg, gap_center_deg, gap_deg):
+        return _angular_distance_deg(theta_deg, gap_center_deg) < (gap_deg * 0.5)
+
+    def build_cylinder_surfaces(radius, height, n_rows, n_sides, gap_center_deg, gap_deg):
+        """
+        Build one full cylinder side mesh, then split faces into:
+        - sensor-covered faces
+        - cable-gap faces
+        """
+        # Use n_rows+1 vertices so we get exactly n_rows face bands (one per sensor row).
+        z_vals = np.linspace(-height * 0.5, height * 0.5, n_rows + 1)
+        theta_edges = np.linspace(0.0, 2.0 * np.pi, n_sides + 1)
+
+        verts = []
+        for z in z_vals:
+            for th in theta_edges:
+                verts.append([radius * np.cos(th), radius * np.sin(th), z])
+        verts = np.asarray(verts, dtype=float)
+
+        def vidx(i_row, j_col):
+            return i_row * (n_sides + 1) + j_col
+
+        all_faces = []
+        face_row_idx = []
+        face_theta_center = []
+        sensor_face_idx = []
+        gap_face_idx = []
+
+        for i in range(n_rows):
+            for j in range(n_sides):
+                f = [
+                    vidx(i, j),
+                    vidx(i, j + 1),
+                    vidx(i + 1, j + 1),
+                    vidx(i + 1, j),
+                ]
+                all_faces.append(f)
+                all_idx = len(all_faces) - 1
+                theta_c_deg = _normalize_deg((j + 0.5) * (360.0 / n_sides))
+                face_theta_center.append(theta_c_deg)
+                face_row_idx.append(i)
+                if _is_gap_angle(theta_c_deg, gap_center_deg, gap_deg):
+                    gap_face_idx.append(all_idx)
+                else:
+                    sensor_face_idx.append(all_idx)
+
+        return (
+            verts,
+            all_faces,
+            np.asarray(face_row_idx, dtype=int),
+            np.asarray(face_theta_center, dtype=float),
+            np.asarray(sensor_face_idx, dtype=int),
+            np.asarray(gap_face_idx, dtype=int),
+        )
+
+    def pressure_to_sensor_facecolors(mat, cmap_name, vmin, vmax, face_rows, face_theta_deg):
+        """
+        Convert 32x64 pressure matrix to RGBA colors for sensor faces only.
+        Mapping:
+        - matrix rows -> cylinder height direction
+        - matrix cols -> sensor angular coverage only (gap excluded)
+        """
+        arr = np.asarray(mat, dtype=float)
+        arr = np.clip(arr, vmin, vmax)
+        denom = max(vmax - vmin, 1e-9)
+        norm = (arr - vmin) / denom
+        cmap_obj = plt.colormaps[cmap_name]
+
+        # Sensor angular start/end where columns 0..63 are mapped.
+        sensor_start_deg = _normalize_deg(CABLE_GAP_CENTER_DEG + (CABLE_GAP_DEG * 0.5))
+        sensor_span_deg = SENSOR_COVERAGE_DEG
+
+        rows_idx = np.clip(face_rows, 0, SENSOR_ROWS - 1).astype(int)
+        rel = np.mod(face_theta_deg - sensor_start_deg, 360.0)
+        rel = np.minimum(rel, sensor_span_deg - 1e-6)
+        cols_idx = np.clip(((rel / sensor_span_deg) * SENSOR_COLS).astype(int), 0, SENSOR_COLS - 1)
+        return cmap_obj(norm[rows_idx, cols_idx])
+
+    (
+        cyl_verts,
+        cyl_faces_all,
+        face_row_all,
+        face_theta_all,
+        sensor_face_idx,
+        gap_face_idx,
+    ) = build_cylinder_surfaces(
+        CYL_RADIUS,
+        CYL_HEIGHT,
+        SENSOR_ROWS,
+        CYL_SIDES,
+        CABLE_GAP_CENTER_DEG,
+        CABLE_GAP_DEG,
+    )
+
+    sensor_faces = [cyl_faces_all[i] for i in sensor_face_idx]
+    gap_faces = [cyl_faces_all[i] for i in gap_face_idx]
+    sensor_rows_for_faces = face_row_all[sensor_face_idx]
+    sensor_thetas_for_faces = face_theta_all[sensor_face_idx]
+
+    edge_color = 'k' if SHOW_3D_MESH_EDGES else 'none'
+    edge_width = 0.2 if SHOW_3D_MESH_EDGES else 0.0
+
+    # Sensor surface (dynamic facecolors from pressure map).
+    sensor_poly = Poly3DCollection(
+        [cyl_verts[f] for f in sensor_faces],
+        facecolors=np.tile((0.1, 0.1, 0.1, 1.0), (len(sensor_faces), 1)),
+        edgecolors=edge_color,
+        linewidths=edge_width,
+    )
+    ax3d.add_collection3d(sensor_poly)
+
+    # Gap surface (static black vertical strip).
+    gap_poly = Poly3DCollection(
+        [cyl_verts[f] for f in gap_faces],
+        facecolors=GAP_COLOR,
+        edgecolors=edge_color,
+        linewidths=edge_width,
+    )
+    ax3d.add_collection3d(gap_poly)
+
+    # Keep backward-compatible name used elsewhere.
+    shape_poly = sensor_poly
+
     # Orientation state
     roll_deg = 0.0
     pitch_deg = 0.0
@@ -302,6 +525,9 @@ if args.show_3d:
         roll_deg = _normalize_angle(roll_deg)
         pitch_deg = _normalize_angle(pitch_deg)
         yaw_deg = _normalize_angle(yaw_deg)
+        latest_orientation["roll_deg"] = roll_deg
+        latest_orientation["pitch_deg"] = pitch_deg
+        latest_orientation["yaw_deg"] = yaw_deg
         # No return; modifies closure vars
 
     def _update_cube_artist():
@@ -313,15 +539,17 @@ if args.show_3d:
         R_y = np.array([[cp,0,sp],[0,1,0],[-sp,0,cp]])
         R_z = np.array([[cy,-sy,0],[sy,cy,0],[0,0,1]])
         R = R_z @ R_y @ R_x
-        verts_rot = (R @ cyl_vertices_base.T).T
-        # Update faces
-        shape_poly.set_verts([verts_rot[f] for f in cyl_faces])
-        ax3d.set_xlim([-1,1]); ax3d.set_ylim([-1,1]); ax3d.set_zlim([-1.2,1.2])
+        verts_rot = (R @ cyl_verts.T).T
+        sensor_poly.set_verts([verts_rot[f] for f in sensor_faces])
+        gap_poly.set_verts([verts_rot[f] for f in gap_faces])
+        ax3d.set_xlim([-lim_xy, lim_xy]); ax3d.set_ylim([-lim_xy, lim_xy]); ax3d.set_zlim([-lim_z, lim_z])
         ax3d.view_init(elev=20., azim=45.)
-        return shape_poly
+        return sensor_poly
 else:
     # Placeholders so references won't break if flag off
     shape_poly = None
+    sensor_poly = None
+    gap_poly = None
     def _update_orientation_state(*_args, **_kwargs):
         return
     def _update_cube_artist():
@@ -346,7 +574,7 @@ def choose_endianness(all_le: np.ndarray) -> str:
     return "LE"
 
 def build_and_show_frame():
-    """Assemble the pressure frame, apply transforms, update heatmap & FPS."""
+    """Assemble the pressure frame, apply transforms, update heatmap, FPS, and 3D cylinder overlay."""
     global frames_ok, smoothed_fps, fps_frames, fps_window_start, chosen_endian
 
     all_le = np.concatenate(pending_chunks)[:FRAME_SIZE]
@@ -376,6 +604,21 @@ def build_and_show_frame():
         im.set_clim(VMIN, VMAX)
 
     im.set_data(mat)
+
+    # Persist exactly what is shown on screen (after transforms).
+    record_display_frame(mat)
+
+    # --- Update 3D cylinder overlay ---
+    if args.show_3d and sensor_poly is not None:
+        sensor_colors = pressure_to_sensor_facecolors(
+            mat,
+            PRESSURE_CMAP,
+            VMIN,
+            VMAX,
+            sensor_rows_for_faces,
+            sensor_thetas_for_faces,
+        )
+        sensor_poly.set_facecolor(sensor_colors)
 
     # Stuck detector
     h = int(np.uint32(mat.sum() * 2654435761 & 0xFFFFFFFF))
@@ -419,6 +662,11 @@ def route_packet(pkt: bytes):
         gx, gy, gz = gx_i / GYRO_SF, gy_i / GYRO_SF, gz_i / GYRO_SF
         ax, ay, az = ax_i / ACC_SF, ay_i / ACC_SF, az_i / ACC_SF
         mx, my, mz = mx_i * MAG_SF_uT, my_i * MAG_SF_uT, mz_i * MAG_SF_uT
+        latest_imu["t_rel_s"] = t
+        latest_imu["gx"] = gx; latest_imu["gy"] = gy; latest_imu["gz"] = gz
+        latest_imu["ax"] = ax; latest_imu["ay"] = ay; latest_imu["az"] = az
+        latest_imu["mx"] = mx; latest_imu["my"] = my; latest_imu["mz"] = mz
+        latest_imu["has_mag"] = True
         t_buf.append(t); t_mag_buf.append(t)
         gx_buf.append(gx); gy_buf.append(gy); gz_buf.append(gz)
         ax_buf.append(ax); ay_buf.append(ay); az_buf.append(az)
@@ -440,6 +688,11 @@ def route_packet(pkt: bytes):
         t = time.time() - start_time
         gx, gy, gz = gx_i / GYRO_SF, gy_i / GYRO_SF, gz_i / GYRO_SF
         ax, ay, az = ax_i / ACC_SF, ay_i / ACC_SF, az_i / ACC_SF
+        latest_imu["t_rel_s"] = t
+        latest_imu["gx"] = gx; latest_imu["gy"] = gy; latest_imu["gz"] = gz
+        latest_imu["ax"] = ax; latest_imu["ay"] = ay; latest_imu["az"] = az
+        latest_imu["mx"] = None; latest_imu["my"] = None; latest_imu["mz"] = None
+        latest_imu["has_mag"] = False
         t_buf.append(t)
         gx_buf.append(gx); gy_buf.append(gy); gz_buf.append(gz)
         ax_buf.append(ax); ay_buf.append(ay); az_buf.append(az)
@@ -474,7 +727,7 @@ def route_packet(pkt: bytes):
 # -----------------------------
 def on_timer(_):
     """Drain UDP, assemble frames with timeouts, update all plots."""
-    global frames_dropped, last_packet_ts
+    global frames_dropped, last_packet_ts, imu_plot_tick
 
     # Drain multiple packets per tick
     for _ in range(UDP_DRAIN_PER_TICK):
@@ -502,7 +755,8 @@ def on_timer(_):
         reset_frame_buffers()
 
     # Update IMU lines
-    if len(t_buf) > 1:
+    imu_plot_tick += 1
+    if len(t_buf) > 1 and (imu_plot_tick % IMU_AUTOSCALE_EVERY_N == 0):
         # Gyro & Accel use t_buf
         l_gx.set_data(t_buf, gx_buf); l_gy.set_data(t_buf, gy_buf); l_gz.set_data(t_buf, gz_buf)
         axG.relim(); axG.autoscale_view()
@@ -512,7 +766,7 @@ def on_timer(_):
             l_gmag.set_data(t_buf, gmag_buf); l_amag.set_data(t_buf, amag_buf)
 
     # Magnetometer uses its own time buffer (avoid length mismatch)
-    if len(t_mag_buf) > 1:
+    if len(t_mag_buf) > 1 and (imu_plot_tick % IMU_AUTOSCALE_EVERY_N == 0):
         l_mx.set_data(t_mag_buf, mx_buf); l_my.set_data(t_mag_buf, my_buf); l_mz.set_data(t_mag_buf, mz_buf)
         axM.relim(); axM.autoscale_view()
         if args.show_magnitude and len(mmag_buf) > 1:
@@ -530,10 +784,13 @@ def on_timer(_):
 # -----------------------------
 # Run
 # -----------------------------
-ani = FuncAnimation(fig, on_timer, interval=ANIM_INTERVAL_MS, blit=False)
+ani = FuncAnimation(fig, on_timer, interval=ANIM_INTERVAL_MS, blit=False, cache_frame_data=False)
 print("[RUN] Close the window to exit.")
 try:
     plt.show()
+except KeyboardInterrupt:
+    # Allow Ctrl+C exit from terminal without noisy Tk callback traceback.
+    pass
 finally:
     try:
         sock.close()
@@ -541,3 +798,5 @@ finally:
         pass
     if csv_fp:
         csv_fp.close()
+    if session_fp:
+        session_fp.close()
