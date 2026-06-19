@@ -1,0 +1,7 @@
+# folder has large videos. should not go
+app/4k_process_final/
+
+# video files
+
+.mov
+.mp4
