@@ -1,0 +1,17 @@
+python .\google_11.py --video ..\IMG_0005.MOV --annotated-out annotated_IMG_0005_5.mp4 --max-frames 150 --process-fps 5 --undistort 
+
+
+python .\detect_apriltag_pose_fixed11_4k.py --video ..\IMG_0005.MOV --annotated-out annotated_IMG_0005_6.mp4 --max-frames 150 --process-fps 5 --undistort
+
+detect_apriltag_pose_fixed11_4k_fixed_intrinsics.py
+
+
+python .\detect_apriltag_pose_fixed11_4k_fixed_intrinsics.py --video ..\IMG_0005.MOV --annotated-out annotated_IMG_0005_6.mp4 --max-frames 150 --process-fps 5 --undistort
+
+python .\detect_apriltag_pose_fixed11_4k_fixed_intrinsics.py --video ..\IMG_0005.MOV --annotated-out annotated_IMG_0005_8.mp4 --max-frames 0 --process-fps 15 --undistort --export-viewer-data .\viewer_0005
+
+#To Process the 4K Video
+python .\detect_apriltag_pose_fixed11_4k_option3_single_state.py --video ..\IMG_0006.mov --annotated-out annotated_IMG_0006_3.mp4 --export-viewer-data .\viewer_0006_3 --process-fps 15 --max-frames 0
+
+#To Run the Viewr_xxxx.html
+python -m http.server 8000 
