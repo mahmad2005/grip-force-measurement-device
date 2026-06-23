@@ -430,18 +430,74 @@ A: Mobile support is planned for future versions. Currently PC-only (Windows/Lin
 
 *Summarized from `app/device_pose_acquisition/4k_video_process/accuracy_analyzer/Note.txt`:*
 
-### AprilTag Processing Examples
+### AprilTag Processing: Script Variants & Frame Range Control
 
-```bash
-# Basic detection (first 150 frames)
-python detect_apriltag_pose_fixed11_4k.py --video input.mov --annotated-out output.mp4 --max-frames 150 --process-fps 5
+The project includes **three AprilTag detection script variants**. Choose based on your needs:
 
-# Export with viewer data (full video)
-python detect_apriltag_pose_fixed11_4k.py --video input.mov --annotated-out output.mp4 --export-viewer-data ./viewer_output --process-fps 15 --max-frames 0
+#### Script Variants
 
-# Select frame range (frames 300–900)
-python detect_apriltag_pose_fixed11_4k.py --video input.mov --export-viewer-data ./viewer_output --process-fps 15 --start-frame 300 --end-frame 900
+| Script | Use Case | Key Features |
+|--------|----------|--------------|
+| **detect_apriltag_pose_fixed11_4k.py** | Main production script | Full video processing, camera matrix auto-scaling |
+| **detect_apriltag_pose_fixed11_4k_option3_single_state.py** | Simplified variant | Fewer options, single tracking mode |
+| **detect_apriltag_pose_fixed11_4k_option3_single_state_start_end_frame.py** | **Best for testing/partial processing** | Frame range control (`--start-frame`, `--end-frame`) |
+
+#### Key Parameters Explained
+
+- **`--start-frame N`** — Begin processing at frame N (1-based). Default: 1
+- **`--end-frame N`** — Stop processing at frame N, inclusive. Default: 0 (process until video ends)
+- **`--process-fps F`** — Limit processing to F fps (e.g., 15). Skips frames to reduce computation. Default: 0 (no limit)
+- **`--max-frames N`** — Process only N frames starting from `--start-frame`. Default: 0 (no limit)
+- **`--annotated-out FILE`** — Write video with overlays drawn (AprilTag pose, cylinder, axes)
+- **`--export-viewer-data PATH`** — Generate interactive 3D viewer HTML + JSON data to PATH folder or .json file
+
+#### Usage Examples
+
+**Example 1: Quick test (first 150 frames, 5 fps)**
+```powershell
+python detect_apriltag_pose_fixed11_4k.py `
+  --video input.mov `
+  --annotated-out output.mp4 `
+  --max-frames 150 `
+  --process-fps 5
 ```
+
+**Example 2: Full video with viewer export**
+```powershell
+python detect_apriltag_pose_fixed11_4k.py `
+  --video input.mov `
+  --annotated-out output.mp4 `
+  --export-viewer-data ./viewer_output `
+  --process-fps 15
+```
+
+**Example 3: Frame range (test specific section, e.g., 19 June capture)**
+```powershell
+python detect_apriltag_pose_fixed11_4k_option3_single_state_start_end_frame.py `
+  --video IMG_006_19June.mov `
+  --annotated-out annotated_IMG_006_19June.mp4 `
+  --export-viewer-data ./viewer_006_19June `
+  --process-fps 15 `
+  --start-frame 300 `
+  --end-frame 900
+```
+
+#### Output Files Created
+
+Each command generates:
+
+- **`annotated_*.mp4`** — Video file with AprilTag overlays (boxes, axes, cylinder object)
+- **`viewer_output/`** (if using `--export-viewer-data`):
+  - `viewer.html` — Self-contained interactive 3D viewer (open in browser)
+  - `viewer_data.json` — Extracted frame data (frame index, detected tags, poses, circle overlaps)
+  - Optional: `viewer_data_overlay.json`, pose history CSV
+
+#### Processing Tips
+
+- **For testing**: Use `--start-frame` and `--end-frame` to process only the section you care about
+- **For speed**: Reduce `--process-fps` (e.g., 5 fps processes 5 frames per second of video)
+- **For accuracy**: Keep `--process-fps` high (15+) or omit it for full precision
+- **For web playback**: Use FFmpeg to resize annotated videos (see next section)
 
 ### Video Format Optimization
 
