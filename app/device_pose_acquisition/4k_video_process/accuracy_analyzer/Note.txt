@@ -15,3 +15,26 @@ python .\detect_apriltag_pose_fixed11_4k_option3_single_state.py --video ..\IMG_
 
 #To Run the Viewr_xxxx.html
 python -m http.server 8000 
+
+
+#To Process the 4K Video. new 19 June
+python .\detect_apriltag_pose_fixed11_4k_option3_single_state_start_end_frame.py --video ..\IMG_006_19June.mov --annotated-out annotated_IMG_006_19June.mp4 --export-viewer-data .\viewer_006_19June --process-fps 15 --start-frame 300 --end-frame 900
+
+
+
+Annotated Video Resizer: 
+
+#full
+ffmpeg -y -i annotated_IMG_006_19June_p2.mp4 -c:v libx264 -pix_fmt yuv420p -preset veryfast -crf 23 -movflags +faststart -an annotated_IMG_006_19June_p2_browser.mp4
+
+#720p
+ffmpeg -y -i annotated_IMG_006_19June_p2.mp4 -vf "scale=1280:-2" -c:v libx264 -pix_fmt yuv420p -preset veryfast -crf 24 -movflags +faststart -an annotated_720p_browser.mp4
+
+#360p
+ffmpeg -y -i annotated_IMG_006_19June_p2.mp4 -vf "scale=-2:360" -c:v libx264 -pix_fmt yuv420p -preset veryfast -crf 27 -movflags +faststart -an annotated_360p_browser.mp4
+
+#360 reduced fps
+ffmpeg -y -i annotated_IMG_006_19June_p2.mp4 -vf "fps=15,scale=-2:360" -c:v libx264 -pix_fmt yuv420p -preset veryfast -crf 28 -movflags +faststart -an annotated_360p_15fps_browser.mp4
+
+#240p
+ffmpeg -y -i annotated_IMG_006_19June_p2.mp4 -vf "fps=15,scale=-2:240" -c:v libx264 -pix_fmt yuv420p -preset veryfast -crf 28 -movflags +faststart -an annotated_240p_15fps_browser.mp4
