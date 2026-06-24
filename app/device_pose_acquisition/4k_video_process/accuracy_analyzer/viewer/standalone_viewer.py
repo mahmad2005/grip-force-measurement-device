@@ -103,7 +103,7 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_STANDALONE_PORT,
         help=f"HTTP port to bind (default: {DEFAULT_STANDALONE_PORT}; use 0 for auto)",
     )
-    parser.add_argument("--file", default="viewer_persistent_panels.html", help="Viewer file relative to this script")
+    parser.add_argument("--file", default="viewer.html", help="Viewer file relative to this script")
     parser.add_argument("--title", default="KinesiologyLab Viewer", help="Desktop window title")
     parser.add_argument("--width", type=int, default=1600, help="Window width")
     parser.add_argument("--height", type=int, default=950, help="Window height")

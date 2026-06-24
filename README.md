@@ -156,7 +156,7 @@ A new high-resolution screenshot showing the **GripForce 3D Simulator interface*
 
 ![GripForce 3D Simulator Outlook](app/new_gripforce_3dsimulator_outlook.png)
 
-Recent updates: Improve viewer sync, graph zoom, and persistent panel layout
+**Recent updates:** Improve viewer sync, graph zoom, and persistent panel layout
 
 ![GripForce 3D Simulator Outlook](app/new_gripforce_3dsimulator_outlook_updated.png)
 
