@@ -156,6 +156,10 @@ A new high-resolution screenshot showing the **GripForce 3D Simulator interface*
 
 ![GripForce 3D Simulator Outlook](app/new_gripforce_3dsimulator_outlook.png)
 
+Recent updates: Improve viewer sync, graph zoom, and persistent panel layout
+
+![GripForce 3D Simulator Outlook](app/new_gripforce_3dsimulator_outlook_updated.png)
+
 This demonstrates the enhanced UI with:
 - Realistic 3D pressure blob movement
 - Real-time gyroscope, accelerometer, and magnetometer traces
