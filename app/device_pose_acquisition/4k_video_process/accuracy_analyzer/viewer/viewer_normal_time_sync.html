@@ -281,7 +281,7 @@
             </div>
             <div id="videoSyncStatus" class="videoStatus">Load an annotated video to sync it with viewer frames.</div>
         </div>
-        <video id="annotatedVideoElement" preload="metadata" playsinline muted style="display:none"></video>
+        <video id="annotatedVideoElement" preload="auto" playsinline muted style="display:none"></video>
     </div>
 
     <div id="pressurePanel" class="sidePanel">
@@ -539,6 +539,10 @@
         let playing = false;
         let lastTs = performance.now();
         let accMs = 0;
+        // Playback is driven by wall-clock time, not by how many draw calls the browser can finish.
+        // This prevents the 3D viewer from slowly falling behind when the pressure/video panels are heavy.
+        let playbackStartFrame = 0;
+        let playbackStartTimeMs = performance.now();
         const fps = Math.max(1, Number(data.fps || 30));
         const positions = Array.isArray(data.positions_local) ? data.positions_local : [];
         const axes = Array.isArray(data.axes_local) ? data.axes_local : [];
@@ -1123,6 +1127,10 @@
         const sessionEntries = [];
         let sessionStartRelTime = null;
         let sessionRelTimes = [];
+        // Cached session-time-axis decision.
+        // Without this cache, hasSessionTimeAxis() scans the whole session every time it is called.
+        // With ~5k pressure frames, graph building calls it thousands of times and the browser can appear frozen.
+        const sessionTimeAxisMode = { ready:false, usable:false, reason:'No session loaded yet.' };
         let pressureShape = PRESSURE_FALLBACK_SHAPE.slice();
         let pressureMeanSeries = [];
         let pressureSeriesRevision = 0;
@@ -1141,7 +1149,7 @@
         let imuSeriesCache = null;
         let sessionReady = false;
         let sessionLoadError = '';
-        const PRESSURE_SYNC_STORAGE_KEY = 'viewerPressureSyncV1';
+        const PRESSURE_SYNC_STORAGE_KEY = 'viewerPressureSyncV2';
         const pressureSync = {
             // Anchor rule: this viewer frame corresponds to this pressure/session order.
             // All other pressure frames are selected from the same time delta around that anchor.
@@ -1165,7 +1173,7 @@
             lastVideoTime: 0,
             loadedName: ''
         };
-        const VIDEO_DRIFT_CORRECTION_SEC = 0.15;
+        const VIDEO_DRIFT_CORRECTION_SEC = 0.50;
         let annotatedVideoReady = false;
         let annotatedVideoLoadError = '';
         let annotatedVideoObjectUrl = null;
@@ -1475,19 +1483,125 @@
             return Number.isFinite(n) ? n.toFixed(digits || 2) : '--';
         }
         function frameCount(){
-            return Math.max(positions.length, pressureFrames.length, overlapRows.length, sessionEntries.length, 1);
+            // Main timeline must come from viewer_data.json only.
+            // Pressure/IMU session files may be longer or start earlier, so they are mapped onto
+            // this viewer timeline through Pressure Sync instead of extending the main slider.
+            return Math.max(positions.length || 0, axes.length || 0, overlapRows.length || 0, 1);
         }
         function refreshSliderMax(){
             slider.max = String(Math.max(0, frameCount() - 1));
         }
-        function hasSessionTimeAxis(){
+        function getViewerFrameSeriesLength(){
+            return Math.max(positions.length || 0, axes.length || 0, overlapRows.length || 0);
+        }
+        function sessionIndexMatchesViewerFrames(){
             if(sessionEntries.length <= 0){ return false; }
-            if(!Number.isFinite(sessionStartRelTime)){ return false; }
-            if(sessionRelTimes.length !== sessionEntries.length){ return false; }
-            for(let i=0; i<sessionRelTimes.length; i++){
-                if(!Number.isFinite(Number(sessionRelTimes[i]))){ return false; }
+            const viewerN = getViewerFrameSeriesLength();
+            if(viewerN <= 0){ return false; }
+            const countDiff = Math.abs(sessionEntries.length - viewerN);
+            const countAligned = countDiff <= Math.max(2, Math.round(viewerN * 0.02));
+            const firstIdx = Number(sessionEntries[0] && sessionEntries[0].frameIdx);
+            const lastIdx = Number(sessionEntries[sessionEntries.length - 1] && sessionEntries[sessionEntries.length - 1].frameIdx);
+            const frameIdxAligned = Number.isFinite(firstIdx) && Number.isFinite(lastIdx) &&
+                Math.abs(firstIdx) <= 2 &&
+                Math.abs(lastIdx - (viewerN - 1)) <= Math.max(2, Math.round(viewerN * 0.02));
+            return countAligned || frameIdxAligned;
+        }
+        function recomputeSessionTimeAxisMode(){
+            sessionTimeAxisMode.ready = true;
+            sessionTimeAxisMode.usable = false;
+            sessionTimeAxisMode.reason = 'Using native session order / fallback fps. Pressure/IMU are not stretched to viewer length.';
+
+            if(sessionEntries.length <= 0){
+                sessionTimeAxisMode.reason = 'No session frames loaded.';
+                return;
             }
-            return true;
+            if(!Number.isFinite(sessionStartRelTime)){
+                sessionTimeAxisMode.reason = 'No valid t_rel_s column; using native session order / fallback fps. Pressure/IMU are not stretched to viewer length.';
+                return;
+            }
+            if(sessionRelTimes.length !== sessionEntries.length){
+                sessionTimeAxisMode.reason = 'Timestamp count does not match session frames; using native session order / fallback fps. Pressure/IMU are not stretched to viewer length.';
+                return;
+            }
+
+            let previous = -Infinity;
+            for(let i = 0; i < sessionRelTimes.length; i++){
+                const t = Number(sessionRelTimes[i]);
+                if(!Number.isFinite(t)){
+                    sessionTimeAxisMode.reason = 'Invalid t_rel_s value; using native session order / fallback fps. Pressure/IMU are not stretched to viewer length.';
+                    return;
+                }
+                // Equal timestamps are allowed. Some session files contain repeated timestamps,
+                // but the time axis is still the session's own native time. Do not stretch it
+                // to match viewer_data.json length.
+                if(t + 1e-6 < previous){
+                    sessionTimeAxisMode.reason = 't_rel_s is not monotonic; using native session order / fallback fps. Pressure/IMU are not stretched to viewer length.';
+                    return;
+                }
+                previous = Math.max(previous, t);
+            }
+
+            if(sessionRelTimes.length < 2){
+                sessionTimeAxisMode.reason = 'Too few timestamps; using native session order / fallback fps. Pressure/IMU are not stretched to viewer length.';
+                return;
+            }
+
+            const first = Number(sessionRelTimes[0] || 0);
+            const last = Number(sessionRelTimes[sessionRelTimes.length - 1] || 0);
+            const rawSpan = last - first;
+            if(rawSpan <= 1e-6){
+                sessionTimeAxisMode.reason = 't_rel_s span is zero; using native session order / fallback fps. Pressure/IMU are not stretched to viewer length.';
+                return;
+            }
+
+            sessionTimeAxisMode.usable = true;
+            sessionTimeAxisMode.reason = 'Using native t_rel_s timestamps. Pressure/IMU are not stretched to viewer length.';
+        }
+        function hasSessionTimeAxis(){
+            return !!(sessionTimeAxisMode.ready && sessionTimeAxisMode.usable);
+        }
+        function getViewerDurationSeconds(){
+            const viewerN = getViewerFrameSeriesLength();
+            return (viewerN > 1) ? ((viewerN - 1) / fps) : 0;
+        }
+        function getSessionMetaFps(){
+            if(!sessionMeta || typeof sessionMeta !== 'object'){ return NaN; }
+            const candidates = [
+                sessionMeta.fps,
+                sessionMeta.frame_rate,
+                sessionMeta.frame_rate_hz,
+                sessionMeta.sample_rate_hz,
+                sessionMeta.sampling_rate_hz,
+                sessionMeta.pressure_fps,
+                sessionMeta.imu_fps,
+                sessionMeta.hz
+            ];
+            for(let i = 0; i < candidates.length; i++){
+                const v = Number(candidates[i]);
+                if(Number.isFinite(v) && v > 0){ return v; }
+            }
+            return NaN;
+        }
+        function estimateSessionPlaybackHz(){
+            // Native pressure/IMU playback rate. Do NOT scale this to viewer_data.json duration.
+            if(hasSessionTimeAxis() && sessionRelTimes.length >= 2){
+                const first = Number(sessionRelTimes[0] || 0);
+                const last = Number(sessionRelTimes[sessionRelTimes.length - 1] || 0);
+                const span = last - first;
+                if(span > 1e-6){
+                    return Math.max(1e-6, (sessionRelTimes.length - 1) / span);
+                }
+            }
+            const metaFps = getSessionMetaFps();
+            if(Number.isFinite(metaFps) && metaFps > 0){ return metaFps; }
+            return fps;
+        }
+        function getSessionTimingModeLabel(){
+            if(hasSessionTimeAxis()){
+                return sessionTimeAxisMode.reason + ' Native session rate ≈ ' + fmtNum(estimateSessionPlaybackHz(), 2) + ' Hz.';
+            }
+            return 'Using native session order at ' + fmtNum(estimateSessionPlaybackHz(), 2) + ' Hz. Pressure/IMU are not stretched to viewer length.';
         }
         function clampSessionOrder(order){
             if(sessionEntries.length <= 0){ return 0; }
@@ -1499,13 +1613,13 @@
             if(hasSessionTimeAxis()){
                 return Number(sessionRelTimes[o] || 0);
             }
-            // Fallback when the session file has no t_rel_s field: assume one pressure entry per viewer frame.
-            return o / fps;
+            // Fallback: convert session order to time using the native pressure/IMU sample rate.
+            return o / estimateSessionPlaybackHz();
         }
         function findSessionOrderAtRelTime(targetTime){
             if(sessionEntries.length <= 0){ return -1; }
             if(!hasSessionTimeAxis()){
-                return clampSessionOrder(Math.round(Number(targetTime || 0) * fps));
+                return clampSessionOrder(Math.round(Number(targetTime || 0) * estimateSessionPlaybackHz()));
             }
             targetTime = Number(targetTime || 0);
             if(targetTime <= Number(sessionRelTimes[0] || 0)){ return 0; }
@@ -1527,15 +1641,7 @@
             return clampSessionOrder(ans);
         }
         function estimateSessionHz(){
-            if(hasSessionTimeAxis() && sessionRelTimes.length >= 2){
-                const first = Number(sessionRelTimes[0] || 0);
-                const last = Number(sessionRelTimes[sessionRelTimes.length - 1] || 0);
-                const span = last - first;
-                if(span > 1e-6){
-                    return Math.max(1e-6, (sessionRelTimes.length - 1) / span);
-                }
-            }
-            return fps;
+            return estimateSessionPlaybackHz();
         }
         function computeSessionOrderForMainFrame(mainFrame){
             if(sessionEntries.length <= 0){ return -1; }
@@ -1549,7 +1655,7 @@
                 return findSessionOrderAtRelTime(anchorSessionTime + viewerDeltaSeconds);
             }
 
-            return clampSessionOrder(anchorSessionOrder + Math.round(viewerDeltaFrames));
+            return clampSessionOrder(anchorSessionOrder + Math.round(viewerDeltaSeconds * estimateSessionPlaybackHz()));
         }
         function mapSessionFrame(mainFrame){
             if(sessionEntries.length <= 0){ return null; }
@@ -1649,7 +1755,7 @@
             pressureSyncStatusEl.textContent =
                 'Viewer f' + frame + ' → pressure #' + currentOrder + ' (' + fileFrameText + ', t=' + fmtNum(currentTime, 2) + 's). ' +
                 'Anchor: viewer f' + pressureSync.viewerFrame + ' = pressure #' + pressureSync.sessionOrder + ' (t=' + fmtNum(anchorTime, 2) + 's). ' +
-                'Session rate ≈ ' + fmtNum(sessionHz, 1) + ' Hz' + (message ? ' | ' + message : '');
+                'Session rate ≈ ' + fmtNum(sessionHz, 1) + ' Hz. ' + getSessionTimingModeLabel() + (message ? ' | ' + message : '');
             lastUiFrameForSyncStatus = frame;
         }
         function initPressureSyncControls(){
@@ -1752,20 +1858,21 @@
                 const targetTime = getSessionRelTimeForOrder(targetOrder);
                 return Math.max(0, Math.round(anchorViewerFrame + ((targetTime - anchorTime) * fps)));
             }
-            return Math.max(0, Math.round(anchorViewerFrame + (targetOrder - anchorSessionOrder)));
+            return Math.max(0, Math.round(anchorViewerFrame + ((targetOrder - anchorSessionOrder) / estimateSessionPlaybackHz()) * fps));
         }
         function buildPressureMeanSeries(){
             pressureMeanSeries = [];
             const rows = Math.max(1, Number(pressureShape[0] || PRESSURE_FALLBACK_SHAPE[0]));
             const cols = Math.max(1, Number(pressureShape[1] || PRESSURE_FALLBACK_SHAPE[1]));
             const expectedPixels = rows * cols;
+            const useRawTimeAxis = hasSessionTimeAxis();
             for(let i = 0; i < sessionEntries.length; i++){
                 const entry = sessionEntries[i] || {};
                 const pressure = Array.isArray(entry.pressure) ? entry.pressure : null;
                 if(!pressure || pressure.length <= 0){
                     pressureMeanSeries.push({
                         order: i,
-                        relTime: getSessionRelTimeForOrder(i),
+                        relTime: useRawTimeAxis ? Number(sessionRelTimes[i] || 0) : (i / estimateSessionPlaybackHz()),
                         mean: 0,
                         max: 0,
                         min: 0,
@@ -1785,7 +1892,7 @@
                 }
                 pressureMeanSeries.push({
                     order: i,
-                    relTime: getSessionRelTimeForOrder(i),
+                    relTime: useRawTimeAxis ? Number(sessionRelTimes[i] || 0) : (i / estimateSessionPlaybackHz()),
                     mean: sumV / count,
                     max: maxV,
                     min: minV,
@@ -1800,7 +1907,7 @@
         function getPressureGraphPoint(order, layout){
             if(order < 0 || order >= pressureMeanSeries.length){ return null; }
             const item = pressureMeanSeries[order];
-            const xValue = hasSessionTimeAxis() ? Number(item.relTime || 0) : Number(item.order || 0);
+            const xValue = (layout && layout.useRawTimeAxis) ? Number(item.relTime || 0) : Number(item.order || 0);
             const xDen = Math.max(1e-6, layout.xMax - layout.xMin);
             const yDen = Math.max(1e-6, layout.yMax - layout.yMin);
             const x = layout.left + ((xValue - layout.xMin) / xDen) * layout.plotW;
@@ -1878,6 +1985,7 @@
             yMax += yPad;
 
             return {
+                useRawTimeAxis: hasSessionTimeAxis(),
                 w: w,
                 h: h,
                 left: left,
@@ -2056,6 +2164,7 @@
             pressureGraphDragOrder = clamped;
             pressureGraphSelectedOrder = clamped;
             setFrame(computeMainFrameForSessionOrder(clamped), true);
+            resetPlaybackClockAtCurrentFrame();
         }
         function initPressureGraphControls(){
             if(!pressureGraphCanvas){ return; }
@@ -2302,7 +2411,13 @@
         }
         function applyVideoMasterFrameSync(){
             if(!isVideoMasterActive() || !playing){ return false; }
+            // Do not let the whole 3D viewer freeze if the browser refuses/pauses video playback.
+            // In that case, fall back to the normal viewer_data.json clock for this tick.
+            if(!annotatedVideoElement || annotatedVideoElement.paused || annotatedVideoElement.readyState < 2){
+                return false;
+            }
             const currentVideoTime = Number(annotatedVideoElement.currentTime || 0);
+            if(!Number.isFinite(currentVideoTime)){ return false; }
             const vf = annotatedVideoSync.viewerFrame + Math.round((currentVideoTime - annotatedVideoSync.videoTime) * fps);
             const mapped = clamp(vf, 0, Math.max(0, frameCount() - 1));
             if(mapped !== frame){
@@ -2327,14 +2442,27 @@
         function setPlaying(value){
             playing = !!value;
             playBtn.textContent = playing ? 'Pause' : 'Play';
+            // Reset playback clock so the viewer_data.json timeline starts immediately and stays real-time.
+            lastTs = performance.now();
+            accMs = 0;
+            playbackStartFrame = frame;
+            playbackStartTimeMs = performance.now();
+            if(annotatedVideoElement){
+                try{ annotatedVideoElement.playbackRate = 1.0; }catch(e){}
+            }
             if(playing && isVideoMasterActive()){
-                syncAnnotatedVideoToViewer(true);
+                syncAnnotatedVideoToViewer(true, true);
                 const p = annotatedVideoElement.play();
                 if(p && typeof p.catch === 'function'){
-                    p.catch(function(){ /* User gesture may be required in some browsers. */ });
+                    p.catch(function(){
+                        // Browser did not allow video-driven playback; keep viewer_data.json playback running.
+                        if(videoMasterChk){ videoMasterChk.checked = false; }
+                        syncAnnotatedVideoToViewer(true, true);
+                    });
                 }
             }else{
-                syncAnnotatedVideoToViewer(true);
+                // Default path: viewer_data.json/3D is master, annotated video follows it.
+                syncAnnotatedVideoToViewer(true, true);
             }
         }
         function initAnnotatedVideoControls(){
@@ -2377,10 +2505,12 @@
                 annotatedVideoElement.addEventListener('loadedmetadata', function(){
                     annotatedVideoReady = true;
                     annotatedVideoSync.videoTime = clampVideoTime(annotatedVideoSync.videoTime);
-                    if(videoMasterChk){ videoMasterChk.checked = true; }
+                    // Keep viewer_data.json as the master timeline by default.
+                    // The annotated video follows the 3D viewer unless the user manually enables Video master.
+                    if(videoMasterChk){ videoMasterChk.checked = false; }
                     saveAnnotatedVideoSync();
-                    updateAnnotatedVideoControls('Video loaded. Use the slider/time box, then Sync here or Start at selected.');
-                    syncAnnotatedVideoToViewer(true);
+                    updateAnnotatedVideoControls('Video loaded. Viewer/3D is the master timeline; video follows it. Use Sync here only if you need a small offset.');
+                    syncAnnotatedVideoToViewer(true, true);
                 });
                 annotatedVideoElement.addEventListener('error', function(){
                     annotatedVideoReady = false;
@@ -2787,6 +2917,152 @@
             }
             drawPressureGraph();
         }
+        function setSessionLoadProgress(message){
+            sessionLoadError = String(message || 'Loading session file...');
+            if(pressureStatsEl){ pressureStatsEl.textContent = sessionLoadError; }
+            if(pressureGraphStatsEl){ pressureGraphStatsEl.textContent = sessionLoadError; }
+            if(pressureSyncStatusEl){ pressureSyncStatusEl.textContent = sessionLoadError; }
+        }
+        function browserYield(){
+            return new Promise(function(resolve){ setTimeout(resolve, 0); });
+        }
+        async function buildPressureMeanSeriesAsync(sourceLabel){
+            pressureMeanSeries = [];
+            const rows = Math.max(1, Number(pressureShape[0] || PRESSURE_FALLBACK_SHAPE[0]));
+            const cols = Math.max(1, Number(pressureShape[1] || PRESSURE_FALLBACK_SHAPE[1]));
+            const expectedPixels = rows * cols;
+            const useRawTimeAxis = hasSessionTimeAxis();
+            const label = sourceLabel || 'session file';
+
+            for(let i = 0; i < sessionEntries.length; i++){
+                const entry = sessionEntries[i] || {};
+                const pressure = Array.isArray(entry.pressure) ? entry.pressure : null;
+                if(!pressure || pressure.length <= 0){
+                    pressureMeanSeries.push({
+                        order: i,
+                        relTime: useRawTimeAxis ? Number(sessionRelTimes[i] || 0) : (i / estimateSessionPlaybackHz()),
+                        mean: 0,
+                        max: 0,
+                        min: 0,
+                        count: 0
+                    });
+                }else{
+                    const count = Math.max(1, Math.min(expectedPixels, pressure.length));
+                    let minV = Infinity;
+                    let maxV = -Infinity;
+                    let sumV = 0;
+                    for(let k = 0; k < count; k++){
+                        const v = Number(pressure[k] || 0);
+                        if(v < minV) minV = v;
+                        if(v > maxV) maxV = v;
+                        sumV += v;
+                    }
+                    pressureMeanSeries.push({
+                        order: i,
+                        relTime: useRawTimeAxis ? Number(sessionRelTimes[i] || 0) : (i / estimateSessionPlaybackHz()),
+                        mean: sumV / count,
+                        max: maxV,
+                        min: minV,
+                        count: count
+                    });
+                }
+                if((i % 120) === 0){
+                    setSessionLoadProgress('Building pressure graph data from ' + label + '... ' + i + ' / ' + sessionEntries.length);
+                    await browserYield();
+                }
+            }
+            pressureSeriesRevision += 1;
+            pressureGraphSelectedOrder = -1;
+            resetPressureGraphView();
+            invalidatePressureGraphCache();
+        }
+        async function parseSessionTextAsync(text, sourceLabel){
+            const label = sourceLabel || 'session file';
+            pressureFrames.length = 0;
+            imuFrames.length = 0;
+            orientationFrames.length = 0;
+            sessionEntries.length = 0;
+            sessionRelTimes = [];
+            sessionStartRelTime = null;
+            sessionTimeAxisMode.ready = false;
+            sessionTimeAxisMode.usable = false;
+            sessionTimeAxisMode.reason = 'Parsing session...';
+            pressureMeanSeries = [];
+            pressureSeriesRevision += 1;
+            invalidatePressureGraphCache();
+            imuSeriesCache = null;
+
+            const raw = String(text || '');
+            let cursor = 0;
+            let lineNo = 0;
+            while(cursor < raw.length){
+                let next = raw.indexOf('\n', cursor);
+                if(next < 0){ next = raw.length; }
+                let line = raw.slice(cursor, next);
+                cursor = next + 1;
+                lineNo += 1;
+                line = line.trim();
+                if(!line){ continue; }
+
+                let obj = null;
+                try{
+                    obj = JSON.parse(line);
+                }catch(err){
+                    throw new Error('JSON parse failed at line ' + lineNo + ': ' + String(err && err.message || err));
+                }
+
+                if(obj && obj.type === 'meta'){
+                    sessionMeta = obj;
+                    if(Array.isArray(obj.frame_shape) && obj.frame_shape.length >= 2){
+                        pressureShape = [Number(obj.frame_shape[0]) || 32, Number(obj.frame_shape[1]) || 64];
+                    }
+                }else if(obj && obj.type === 'frame'){
+                    const idx = Number(obj.frame_idx);
+                    if(Number.isFinite(idx) && idx >= 0){
+                        pressureFrames[idx] = Array.isArray(obj.pressure_u16_flat) ? obj.pressure_u16_flat : null;
+                        imuFrames[idx] = obj.imu || null;
+                        orientationFrames[idx] = obj.orientation_deg || null;
+                        const tRel = Number(obj.t_rel_s);
+                        sessionEntries.push({
+                            frameIdx: idx,
+                            tRel: Number.isFinite(tRel) ? tRel : NaN,
+                            pressure: Array.isArray(obj.pressure_u16_flat) ? obj.pressure_u16_flat : null,
+                            imu: obj.imu || null,
+                            orientation: obj.orientation_deg || null
+                        });
+                    }
+                }
+
+                if((lineNo % 80) === 0){
+                    setSessionLoadProgress('Parsing ' + label + '... line ' + lineNo + ', frames ' + sessionEntries.length);
+                    await browserYield();
+                }
+            }
+
+            setSessionLoadProgress('Preparing ' + label + '... sorting ' + sessionEntries.length + ' frames');
+            await browserYield();
+            sessionEntries.sort(function(a, b){ return a.frameIdx - b.frameIdx; });
+            for(let i=0;i<sessionEntries.length;i++){
+                sessionEntries[i].order = i;
+                if(Number.isFinite(sessionEntries[i].tRel) && !Number.isFinite(sessionStartRelTime)){
+                    sessionStartRelTime = sessionEntries[i].tRel;
+                }
+            }
+            if(Number.isFinite(sessionStartRelTime)){
+                sessionRelTimes = sessionEntries.map(function(entry){
+                    return Number.isFinite(entry.tRel) ? (entry.tRel - sessionStartRelTime) : 0;
+                });
+            }
+            recomputeSessionTimeAxisMode();
+            await buildPressureMeanSeriesAsync(label);
+            setSessionLoadProgress('Building IMU/cylinder data from ' + label + '...');
+            await browserYield();
+            buildImuSeriesCache();
+            rebuildCylinderMesh();
+            clampPressureSync();
+            savePressureSync();
+            updatePressureSyncControls('Loaded ' + sessionEntries.length + ' session frames.');
+        }
         function parseSessionText(text){
             pressureFrames.length = 0;
             imuFrames.length = 0;
@@ -2794,6 +3070,9 @@
             sessionEntries.length = 0;
             sessionRelTimes = [];
             sessionStartRelTime = null;
+            sessionTimeAxisMode.ready = false;
+            sessionTimeAxisMode.usable = false;
+            sessionTimeAxisMode.reason = 'Parsing session...';
             pressureMeanSeries = [];
             pressureSeriesRevision += 1;
             invalidatePressureGraphCache();
@@ -2839,6 +3118,7 @@
                     return Number.isFinite(entry.tRel) ? (entry.tRel - sessionStartRelTime) : 0;
                 });
             }
+            recomputeSessionTimeAxisMode();
             buildPressureMeanSeries();
             buildImuSeriesCache();
             rebuildCylinderMesh();
@@ -2849,10 +3129,14 @@
         async function loadSessionNdjson(){
             try{
                 sessionLoadError = '';
+                sessionReady = false;
                 const resp = await fetch('./session.ndjson', {cache:'no-store'});
                 if(!resp.ok){ throw new Error('HTTP ' + resp.status); }
                 const text = await resp.text();
-                parseSessionText(text);
+                sessionLoadError = 'Parsing session.ndjson...';
+                updateSessionPanels();
+                await new Promise(function(resolve){ setTimeout(resolve, 20); });
+                await parseSessionTextAsync(text, 'session.ndjson');
                 sessionReady = true;
                 refreshSliderMax();
                 updateSessionPanels();
@@ -3508,7 +3792,6 @@
             status.textContent = (frame+1) + ' / ' + count + '  (' + (frame/fps).toFixed(2) + 's)';
             updateOverlapPanel();
             updateSessionPanels();
-            syncAnnotatedVideoToViewer(!!forceVideoSeek);
             syncAnnotatedVideoToViewer(!!forceVideoSeek, !!forceVideoSeek);
         }
         function drawTopViewLabel(text, x, y, color, align){
@@ -3796,10 +4079,15 @@
             renderTopViewPreview();
             renderAnnotatedVideo();
         }
-        slider.addEventListener('input', function(){ setFrame(parseInt(slider.value||'0',10)||0, true); });
+        function resetPlaybackClockAtCurrentFrame(){
+            playbackStartFrame = frame;
+            playbackStartTimeMs = performance.now();
+            accMs = 0;
+        }
+        slider.addEventListener('input', function(){ setFrame(parseInt(slider.value||'0',10)||0, true); resetPlaybackClockAtCurrentFrame(); });
         playBtn.addEventListener('click', function(){ setPlaying(!playing); });
-        prevBtn.addEventListener('click', function(){ setFrame(frame-1, true); });
-        nextBtn.addEventListener('click', function(){ setFrame(frame+1, true); });
+        prevBtn.addEventListener('click', function(){ setFrame(frame-1, true); resetPlaybackClockAtCurrentFrame(); });
+        nextBtn.addEventListener('click', function(){ setFrame(frame+1, true); resetPlaybackClockAtCurrentFrame(); });
         if(videoMasterChk){
             videoMasterChk.checked = false;
             videoMasterChk.addEventListener('change', function(){
@@ -3929,8 +4217,15 @@
             if(!f){ return; }
             try{
                 sessionLoadError = '';
+                sessionReady = false;
+                sessionLoadError = 'Loading selected session file...';
+                updateSessionPanels();
+                await new Promise(function(resolve){ setTimeout(resolve, 20); });
                 const text = await f.text();
-                parseSessionText(text);
+                sessionLoadError = 'Parsing selected session file...';
+                updateSessionPanels();
+                await new Promise(function(resolve){ setTimeout(resolve, 20); });
+                await parseSessionTextAsync(text, f.name || 'selected session file');
                 sessionReady = true;
                 refreshSliderMax();
                 setFrame(frame, true);
@@ -3940,25 +4235,30 @@
             }
         });
         function tick(ts){
-            const dt = ts-lastTs; lastTs=ts;
+            const dt = ts - lastTs;
+            lastTs = ts;
             const count = frameCount();
-            if(playing && count>1){
+            if(playing && count > 1){
+                let videoMasterAdvanced = false;
                 if(isVideoMasterActive()){
-                    const ok = applyVideoMasterFrameSync();
-                    if(!ok){
-                        accMs += dt;
-                    }
+                    videoMasterAdvanced = applyVideoMasterFrameSync();
                     const d = getAnnotatedVideoDuration();
-                    if(annotatedVideoReady && d > 0 && Number(annotatedVideoElement.currentTime || 0) >= d - 0.03){
+                    if(videoMasterAdvanced && annotatedVideoReady && d > 0 && Number(annotatedVideoElement.currentTime || 0) >= d - 0.03){
                         setPlaying(false);
                     }
-                }else{
-                    accMs += dt;
-                    const step = 1000/fps;
-                    while(accMs>=step){
-                        setFrame(frame+1, false);
-                        accMs -= step;
-                        if(frame>=count-1){ setPlaying(false); break; }
+                }
+                if(!videoMasterAdvanced){
+                    // 3D/viewer_data.json is the master timeline. Use elapsed wall-clock time so heavy drawing
+                    // cannot make pressure/IMU/video appear to run ahead of a delayed 3D viewer.
+                    const elapsedMs = Math.max(0, ts - playbackStartTimeMs);
+                    const targetFrame = clamp(playbackStartFrame + Math.floor((elapsedMs * fps) / 1000), 0, Math.max(0, count - 1));
+                    if(targetFrame !== frame){
+                        setFrame(targetFrame, false);
+                    }else{
+                        syncAnnotatedVideoToViewer(false, false);
+                    }
+                    if(targetFrame >= count - 1){
+                        setPlaying(false);
                     }
                 }
             }

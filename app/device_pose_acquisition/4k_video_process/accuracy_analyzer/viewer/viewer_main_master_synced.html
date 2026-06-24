@@ -1123,6 +1123,10 @@
         const sessionEntries = [];
         let sessionStartRelTime = null;
         let sessionRelTimes = [];
+        // Cached session-time-axis decision.
+        // Without this cache, hasSessionTimeAxis() scans the whole session every time it is called.
+        // With ~5k pressure frames, graph building calls it thousands of times and the browser can appear frozen.
+        const sessionTimeAxisMode = { ready:false, usable:false, reason:'No session loaded yet.' };
         let pressureShape = PRESSURE_FALLBACK_SHAPE.slice();
         let pressureMeanSeries = [];
         let pressureSeriesRevision = 0;
@@ -1475,19 +1479,99 @@
             return Number.isFinite(n) ? n.toFixed(digits || 2) : '--';
         }
         function frameCount(){
-            return Math.max(positions.length, pressureFrames.length, overlapRows.length, sessionEntries.length, 1);
+            // Main timeline must come from viewer_data.json only.
+            // Pressure/IMU session files may be longer or start earlier, so they are mapped onto
+            // this viewer timeline through Pressure Sync instead of extending the main slider.
+            return Math.max(positions.length || 0, axes.length || 0, overlapRows.length || 0, 1);
         }
         function refreshSliderMax(){
             slider.max = String(Math.max(0, frameCount() - 1));
         }
-        function hasSessionTimeAxis(){
+        function getViewerFrameSeriesLength(){
+            return Math.max(positions.length || 0, axes.length || 0, overlapRows.length || 0);
+        }
+        function sessionIndexMatchesViewerFrames(){
             if(sessionEntries.length <= 0){ return false; }
-            if(!Number.isFinite(sessionStartRelTime)){ return false; }
-            if(sessionRelTimes.length !== sessionEntries.length){ return false; }
-            for(let i=0; i<sessionRelTimes.length; i++){
-                if(!Number.isFinite(Number(sessionRelTimes[i]))){ return false; }
+            const viewerN = getViewerFrameSeriesLength();
+            if(viewerN <= 0){ return false; }
+            const countDiff = Math.abs(sessionEntries.length - viewerN);
+            const countAligned = countDiff <= Math.max(2, Math.round(viewerN * 0.02));
+            const firstIdx = Number(sessionEntries[0] && sessionEntries[0].frameIdx);
+            const lastIdx = Number(sessionEntries[sessionEntries.length - 1] && sessionEntries[sessionEntries.length - 1].frameIdx);
+            const frameIdxAligned = Number.isFinite(firstIdx) && Number.isFinite(lastIdx) &&
+                Math.abs(firstIdx) <= 2 &&
+                Math.abs(lastIdx - (viewerN - 1)) <= Math.max(2, Math.round(viewerN * 0.02));
+            return countAligned || frameIdxAligned;
+        }
+        function recomputeSessionTimeAxisMode(){
+            sessionTimeAxisMode.ready = true;
+            sessionTimeAxisMode.usable = false;
+            sessionTimeAxisMode.reason = 'Using session order / viewer fps.';
+
+            if(sessionEntries.length <= 0){
+                sessionTimeAxisMode.reason = 'No session frames loaded.';
+                return;
             }
-            return true;
+            if(!Number.isFinite(sessionStartRelTime)){
+                sessionTimeAxisMode.reason = 'No valid t_rel_s column; using session order / viewer fps.';
+                return;
+            }
+            if(sessionRelTimes.length !== sessionEntries.length){
+                sessionTimeAxisMode.reason = 'Timestamp count does not match session frames; using session order / viewer fps.';
+                return;
+            }
+
+            let previous = -Infinity;
+            let duplicateOrZeroSteps = 0;
+            for(let i = 0; i < sessionRelTimes.length; i++){
+                const t = Number(sessionRelTimes[i]);
+                if(!Number.isFinite(t)){
+                    sessionTimeAxisMode.reason = 'Invalid t_rel_s value; using session order / viewer fps.';
+                    return;
+                }
+                if(t + 1e-6 < previous){
+                    sessionTimeAxisMode.reason = 't_rel_s is not monotonic; using session order / viewer fps.';
+                    return;
+                }
+                if(i > 0){
+                    const dt = t - Number(sessionRelTimes[i - 1]);
+                    if(!Number.isFinite(dt) || dt <= 1e-6){ duplicateOrZeroSteps += 1; }
+                }
+                previous = Math.max(previous, t);
+            }
+
+            if(sessionRelTimes.length < 2){
+                sessionTimeAxisMode.reason = 'Too few timestamps; using session order / viewer fps.';
+                return;
+            }
+
+            const first = Number(sessionRelTimes[0] || 0);
+            const last = Number(sessionRelTimes[sessionRelTimes.length - 1] || 0);
+            const rawSpan = last - first;
+            const expectedSpan = Math.max(1e-6, (sessionEntries.length - 1) / fps);
+            const duplicateRatio = duplicateOrZeroSteps / Math.max(1, sessionRelTimes.length - 1);
+
+            // If t_rel_s is duplicated/stretched, it cannot be used as the master x-axis.
+            // In that case, session order is the reliable common index for pressure + IMU.
+            if(rawSpan <= 1e-6){
+                sessionTimeAxisMode.reason = 't_rel_s span is zero; using session order / viewer fps.';
+                return;
+            }
+            if(duplicateRatio > 0.10){
+                sessionTimeAxisMode.reason = 't_rel_s has many duplicate samples; using session order / viewer fps.';
+                return;
+            }
+            const spanError = Math.abs(rawSpan - expectedSpan) / expectedSpan;
+            if(spanError > 0.20){
+                sessionTimeAxisMode.reason = 't_rel_s duration differs from viewer fps duration; using session order / viewer fps.';
+                return;
+            }
+
+            sessionTimeAxisMode.usable = true;
+            sessionTimeAxisMode.reason = 'Using valid t_rel_s timestamps.';
+        }
+        function hasSessionTimeAxis(){
+            return !!(sessionTimeAxisMode.ready && sessionTimeAxisMode.usable);
         }
         function clampSessionOrder(order){
             if(sessionEntries.length <= 0){ return 0; }
@@ -1649,7 +1733,7 @@
             pressureSyncStatusEl.textContent =
                 'Viewer f' + frame + ' → pressure #' + currentOrder + ' (' + fileFrameText + ', t=' + fmtNum(currentTime, 2) + 's). ' +
                 'Anchor: viewer f' + pressureSync.viewerFrame + ' = pressure #' + pressureSync.sessionOrder + ' (t=' + fmtNum(anchorTime, 2) + 's). ' +
-                'Session rate ≈ ' + fmtNum(sessionHz, 1) + ' Hz' + (message ? ' | ' + message : '');
+                'Session rate ≈ ' + fmtNum(sessionHz, 1) + ' Hz. ' + sessionTimeAxisMode.reason + (message ? ' | ' + message : '');
             lastUiFrameForSyncStatus = frame;
         }
         function initPressureSyncControls(){
@@ -1759,13 +1843,14 @@
             const rows = Math.max(1, Number(pressureShape[0] || PRESSURE_FALLBACK_SHAPE[0]));
             const cols = Math.max(1, Number(pressureShape[1] || PRESSURE_FALLBACK_SHAPE[1]));
             const expectedPixels = rows * cols;
+            const useRawTimeAxis = hasSessionTimeAxis();
             for(let i = 0; i < sessionEntries.length; i++){
                 const entry = sessionEntries[i] || {};
                 const pressure = Array.isArray(entry.pressure) ? entry.pressure : null;
                 if(!pressure || pressure.length <= 0){
                     pressureMeanSeries.push({
                         order: i,
-                        relTime: getSessionRelTimeForOrder(i),
+                        relTime: useRawTimeAxis ? Number(sessionRelTimes[i] || 0) : (i / fps),
                         mean: 0,
                         max: 0,
                         min: 0,
@@ -1785,7 +1870,7 @@
                 }
                 pressureMeanSeries.push({
                     order: i,
-                    relTime: getSessionRelTimeForOrder(i),
+                    relTime: useRawTimeAxis ? Number(sessionRelTimes[i] || 0) : (i / fps),
                     mean: sumV / count,
                     max: maxV,
                     min: minV,
@@ -1800,7 +1885,7 @@
         function getPressureGraphPoint(order, layout){
             if(order < 0 || order >= pressureMeanSeries.length){ return null; }
             const item = pressureMeanSeries[order];
-            const xValue = hasSessionTimeAxis() ? Number(item.relTime || 0) : Number(item.order || 0);
+            const xValue = (layout && layout.useRawTimeAxis) ? Number(item.relTime || 0) : Number(item.order || 0);
             const xDen = Math.max(1e-6, layout.xMax - layout.xMin);
             const yDen = Math.max(1e-6, layout.yMax - layout.yMin);
             const x = layout.left + ((xValue - layout.xMin) / xDen) * layout.plotW;
@@ -1878,6 +1963,7 @@
             yMax += yPad;
 
             return {
+                useRawTimeAxis: hasSessionTimeAxis(),
                 w: w,
                 h: h,
                 left: left,
@@ -2302,7 +2388,13 @@
         }
         function applyVideoMasterFrameSync(){
             if(!isVideoMasterActive() || !playing){ return false; }
+            // Do not let the whole 3D viewer freeze if the browser refuses/pauses video playback.
+            // In that case, fall back to the normal viewer_data.json clock for this tick.
+            if(!annotatedVideoElement || annotatedVideoElement.paused || annotatedVideoElement.readyState < 2){
+                return false;
+            }
             const currentVideoTime = Number(annotatedVideoElement.currentTime || 0);
+            if(!Number.isFinite(currentVideoTime)){ return false; }
             const vf = annotatedVideoSync.viewerFrame + Math.round((currentVideoTime - annotatedVideoSync.videoTime) * fps);
             const mapped = clamp(vf, 0, Math.max(0, frameCount() - 1));
             if(mapped !== frame){
@@ -2327,14 +2419,22 @@
         function setPlaying(value){
             playing = !!value;
             playBtn.textContent = playing ? 'Pause' : 'Play';
+            // Reset the animation accumulator so playback starts immediately from the current viewer frame.
+            lastTs = performance.now();
+            accMs = 0;
             if(playing && isVideoMasterActive()){
-                syncAnnotatedVideoToViewer(true);
+                syncAnnotatedVideoToViewer(true, true);
                 const p = annotatedVideoElement.play();
                 if(p && typeof p.catch === 'function'){
-                    p.catch(function(){ /* User gesture may be required in some browsers. */ });
+                    p.catch(function(){
+                        // Browser did not allow video-driven playback; keep viewer_data.json playback running.
+                        if(videoMasterChk){ videoMasterChk.checked = false; }
+                        syncAnnotatedVideoToViewer(true, true);
+                    });
                 }
             }else{
-                syncAnnotatedVideoToViewer(true);
+                // Default path: viewer_data.json/3D is master, annotated video follows it.
+                syncAnnotatedVideoToViewer(true, true);
             }
         }
         function initAnnotatedVideoControls(){
@@ -2377,10 +2477,12 @@
                 annotatedVideoElement.addEventListener('loadedmetadata', function(){
                     annotatedVideoReady = true;
                     annotatedVideoSync.videoTime = clampVideoTime(annotatedVideoSync.videoTime);
-                    if(videoMasterChk){ videoMasterChk.checked = true; }
+                    // Keep viewer_data.json as the master timeline by default.
+                    // The annotated video follows the 3D viewer unless the user manually enables Video master.
+                    if(videoMasterChk){ videoMasterChk.checked = false; }
                     saveAnnotatedVideoSync();
-                    updateAnnotatedVideoControls('Video loaded. Use the slider/time box, then Sync here or Start at selected.');
-                    syncAnnotatedVideoToViewer(true);
+                    updateAnnotatedVideoControls('Video loaded. Viewer/3D is the master timeline; video follows it. Use Sync here only if you need a small offset.');
+                    syncAnnotatedVideoToViewer(true, true);
                 });
                 annotatedVideoElement.addEventListener('error', function(){
                     annotatedVideoReady = false;
@@ -2787,6 +2889,152 @@
             }
             drawPressureGraph();
         }
+        function setSessionLoadProgress(message){
+            sessionLoadError = String(message || 'Loading session file...');
+            if(pressureStatsEl){ pressureStatsEl.textContent = sessionLoadError; }
+            if(pressureGraphStatsEl){ pressureGraphStatsEl.textContent = sessionLoadError; }
+            if(pressureSyncStatusEl){ pressureSyncStatusEl.textContent = sessionLoadError; }
+        }
+        function browserYield(){
+            return new Promise(function(resolve){ setTimeout(resolve, 0); });
+        }
+        async function buildPressureMeanSeriesAsync(sourceLabel){
+            pressureMeanSeries = [];
+            const rows = Math.max(1, Number(pressureShape[0] || PRESSURE_FALLBACK_SHAPE[0]));
+            const cols = Math.max(1, Number(pressureShape[1] || PRESSURE_FALLBACK_SHAPE[1]));
+            const expectedPixels = rows * cols;
+            const useRawTimeAxis = hasSessionTimeAxis();
+            const label = sourceLabel || 'session file';
+
+            for(let i = 0; i < sessionEntries.length; i++){
+                const entry = sessionEntries[i] || {};
+                const pressure = Array.isArray(entry.pressure) ? entry.pressure : null;
+                if(!pressure || pressure.length <= 0){
+                    pressureMeanSeries.push({
+                        order: i,
+                        relTime: useRawTimeAxis ? Number(sessionRelTimes[i] || 0) : (i / fps),
+                        mean: 0,
+                        max: 0,
+                        min: 0,
+                        count: 0
+                    });
+                }else{
+                    const count = Math.max(1, Math.min(expectedPixels, pressure.length));
+                    let minV = Infinity;
+                    let maxV = -Infinity;
+                    let sumV = 0;
+                    for(let k = 0; k < count; k++){
+                        const v = Number(pressure[k] || 0);
+                        if(v < minV) minV = v;
+                        if(v > maxV) maxV = v;
+                        sumV += v;
+                    }
+                    pressureMeanSeries.push({
+                        order: i,
+                        relTime: useRawTimeAxis ? Number(sessionRelTimes[i] || 0) : (i / fps),
+                        mean: sumV / count,
+                        max: maxV,
+                        min: minV,
+                        count: count
+                    });
+                }
+                if((i % 120) === 0){
+                    setSessionLoadProgress('Building pressure graph data from ' + label + '... ' + i + ' / ' + sessionEntries.length);
+                    await browserYield();
+                }
+            }
+            pressureSeriesRevision += 1;
+            pressureGraphSelectedOrder = -1;
+            resetPressureGraphView();
+            invalidatePressureGraphCache();
+        }
+        async function parseSessionTextAsync(text, sourceLabel){
+            const label = sourceLabel || 'session file';
+            pressureFrames.length = 0;
+            imuFrames.length = 0;
+            orientationFrames.length = 0;
+            sessionEntries.length = 0;
+            sessionRelTimes = [];
+            sessionStartRelTime = null;
+            sessionTimeAxisMode.ready = false;
+            sessionTimeAxisMode.usable = false;
+            sessionTimeAxisMode.reason = 'Parsing session...';
+            pressureMeanSeries = [];
+            pressureSeriesRevision += 1;
+            invalidatePressureGraphCache();
+            imuSeriesCache = null;
+
+            const raw = String(text || '');
+            let cursor = 0;
+            let lineNo = 0;
+            while(cursor < raw.length){
+                let next = raw.indexOf('\n', cursor);
+                if(next < 0){ next = raw.length; }
+                let line = raw.slice(cursor, next);
+                cursor = next + 1;
+                lineNo += 1;
+                line = line.trim();
+                if(!line){ continue; }
+
+                let obj = null;
+                try{
+                    obj = JSON.parse(line);
+                }catch(err){
+                    throw new Error('JSON parse failed at line ' + lineNo + ': ' + String(err && err.message || err));
+                }
+
+                if(obj && obj.type === 'meta'){
+                    sessionMeta = obj;
+                    if(Array.isArray(obj.frame_shape) && obj.frame_shape.length >= 2){
+                        pressureShape = [Number(obj.frame_shape[0]) || 32, Number(obj.frame_shape[1]) || 64];
+                    }
+                }else if(obj && obj.type === 'frame'){
+                    const idx = Number(obj.frame_idx);
+                    if(Number.isFinite(idx) && idx >= 0){
+                        pressureFrames[idx] = Array.isArray(obj.pressure_u16_flat) ? obj.pressure_u16_flat : null;
+                        imuFrames[idx] = obj.imu || null;
+                        orientationFrames[idx] = obj.orientation_deg || null;
+                        const tRel = Number(obj.t_rel_s);
+                        sessionEntries.push({
+                            frameIdx: idx,
+                            tRel: Number.isFinite(tRel) ? tRel : NaN,
+                            pressure: Array.isArray(obj.pressure_u16_flat) ? obj.pressure_u16_flat : null,
+                            imu: obj.imu || null,
+                            orientation: obj.orientation_deg || null
+                        });
+                    }
+                }
+
+                if((lineNo % 80) === 0){
+                    setSessionLoadProgress('Parsing ' + label + '... line ' + lineNo + ', frames ' + sessionEntries.length);
+                    await browserYield();
+                }
+            }
+
+            setSessionLoadProgress('Preparing ' + label + '... sorting ' + sessionEntries.length + ' frames');
+            await browserYield();
+            sessionEntries.sort(function(a, b){ return a.frameIdx - b.frameIdx; });
+            for(let i=0;i<sessionEntries.length;i++){
+                sessionEntries[i].order = i;
+                if(Number.isFinite(sessionEntries[i].tRel) && !Number.isFinite(sessionStartRelTime)){
+                    sessionStartRelTime = sessionEntries[i].tRel;
+                }
+            }
+            if(Number.isFinite(sessionStartRelTime)){
+                sessionRelTimes = sessionEntries.map(function(entry){
+                    return Number.isFinite(entry.tRel) ? (entry.tRel - sessionStartRelTime) : 0;
+                });
+            }
+            recomputeSessionTimeAxisMode();
+            await buildPressureMeanSeriesAsync(label);
+            setSessionLoadProgress('Building IMU/cylinder data from ' + label + '...');
+            await browserYield();
+            buildImuSeriesCache();
+            rebuildCylinderMesh();
+            clampPressureSync();
+            savePressureSync();
+            updatePressureSyncControls('Loaded ' + sessionEntries.length + ' session frames.');
+        }
         function parseSessionText(text){
             pressureFrames.length = 0;
             imuFrames.length = 0;
@@ -2794,6 +3042,9 @@
             sessionEntries.length = 0;
             sessionRelTimes = [];
             sessionStartRelTime = null;
+            sessionTimeAxisMode.ready = false;
+            sessionTimeAxisMode.usable = false;
+            sessionTimeAxisMode.reason = 'Parsing session...';
             pressureMeanSeries = [];
             pressureSeriesRevision += 1;
             invalidatePressureGraphCache();
@@ -2839,6 +3090,7 @@
                     return Number.isFinite(entry.tRel) ? (entry.tRel - sessionStartRelTime) : 0;
                 });
             }
+            recomputeSessionTimeAxisMode();
             buildPressureMeanSeries();
             buildImuSeriesCache();
             rebuildCylinderMesh();
@@ -2849,10 +3101,14 @@
         async function loadSessionNdjson(){
             try{
                 sessionLoadError = '';
+                sessionReady = false;
                 const resp = await fetch('./session.ndjson', {cache:'no-store'});
                 if(!resp.ok){ throw new Error('HTTP ' + resp.status); }
                 const text = await resp.text();
-                parseSessionText(text);
+                sessionLoadError = 'Parsing session.ndjson...';
+                updateSessionPanels();
+                await new Promise(function(resolve){ setTimeout(resolve, 20); });
+                await parseSessionTextAsync(text, 'session.ndjson');
                 sessionReady = true;
                 refreshSliderMax();
                 updateSessionPanels();
@@ -3929,8 +4185,15 @@
             if(!f){ return; }
             try{
                 sessionLoadError = '';
+                sessionReady = false;
+                sessionLoadError = 'Loading selected session file...';
+                updateSessionPanels();
+                await new Promise(function(resolve){ setTimeout(resolve, 20); });
                 const text = await f.text();
-                parseSessionText(text);
+                sessionLoadError = 'Parsing selected session file...';
+                updateSessionPanels();
+                await new Promise(function(resolve){ setTimeout(resolve, 20); });
+                await parseSessionTextAsync(text, f.name || 'selected session file');
                 sessionReady = true;
                 refreshSliderMax();
                 setFrame(frame, true);

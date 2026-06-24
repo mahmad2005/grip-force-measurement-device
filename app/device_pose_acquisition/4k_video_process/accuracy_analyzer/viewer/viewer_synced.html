@@ -1480,13 +1480,71 @@
         function refreshSliderMax(){
             slider.max = String(Math.max(0, frameCount() - 1));
         }
-        function hasSessionTimeAxis(){
+        function getViewerFrameSeriesLength(){
+            return Math.max(positions.length || 0, axes.length || 0, overlapRows.length || 0);
+        }
+        function sessionIndexMatchesViewerFrames(){
+            if(sessionEntries.length <= 0){ return false; }
+            const viewerN = getViewerFrameSeriesLength();
+            if(viewerN <= 0){ return false; }
+            const countDiff = Math.abs(sessionEntries.length - viewerN);
+            const countAligned = countDiff <= Math.max(2, Math.round(viewerN * 0.02));
+            const firstIdx = Number(sessionEntries[0] && sessionEntries[0].frameIdx);
+            const lastIdx = Number(sessionEntries[sessionEntries.length - 1] && sessionEntries[sessionEntries.length - 1].frameIdx);
+            const frameIdxAligned = Number.isFinite(firstIdx) && Number.isFinite(lastIdx) &&
+                Math.abs(firstIdx) <= 2 &&
+                Math.abs(lastIdx - (viewerN - 1)) <= Math.max(2, Math.round(viewerN * 0.02));
+            return countAligned || frameIdxAligned;
+        }
+        function rawSessionTimeAxisIsValid(){
             if(sessionEntries.length <= 0){ return false; }
             if(!Number.isFinite(sessionStartRelTime)){ return false; }
             if(sessionRelTimes.length !== sessionEntries.length){ return false; }
+            let previous = -Infinity;
             for(let i=0; i<sessionRelTimes.length; i++){
-                if(!Number.isFinite(Number(sessionRelTimes[i]))){ return false; }
+                const t = Number(sessionRelTimes[i]);
+                if(!Number.isFinite(t)){ return false; }
+                if(t + 1e-6 < previous){ return false; }
+                previous = Math.max(previous, t);
             }
+            return true;
+        }
+        function sessionRawTimeLooksConsistentWithViewer(){
+            if(!rawSessionTimeAxisIsValid()){ return false; }
+            if(sessionRelTimes.length < 2){ return false; }
+            const first = Number(sessionRelTimes[0] || 0);
+            const last = Number(sessionRelTimes[sessionRelTimes.length - 1] || 0);
+            const rawSpan = last - first;
+            const expectedSpan = Math.max(1e-6, (sessionEntries.length - 1) / fps);
+            if(rawSpan <= 1e-6){ return false; }
+
+            let duplicateOrZeroSteps = 0;
+            for(let i = 1; i < sessionRelTimes.length; i++){
+                const dt = Number(sessionRelTimes[i]) - Number(sessionRelTimes[i - 1]);
+                if(!Number.isFinite(dt) || dt <= 1e-6){ duplicateOrZeroSteps += 1; }
+            }
+            const duplicateRatio = duplicateOrZeroSteps / Math.max(1, sessionRelTimes.length - 1);
+
+            // A usable timestamp column should advance almost every sample and should be close to the
+            // viewer duration implied by frame count and viewer fps. In the problem file, t_rel_s spans
+            // about 323 s while 4942 frames at 30 fps spans about 165 s, and more than half the dt values
+            // are duplicated. That makes time-based pressure mapping land near the middle at viewer frame
+            // 4840. Treat that timestamp column as unreliable and fall back to order/fps.
+            if(duplicateRatio > 0.10){ return false; }
+            return Math.abs(rawSpan - expectedSpan) / expectedSpan <= 0.20;
+        }
+        function hasSessionTimeAxis(){
+            if(!rawSessionTimeAxisIsValid()){ return false; }
+
+            // Important sync rule:
+            // Pressure and IMU panels are both driven by the same session order. If the raw t_rel_s axis
+            // is stretched, duplicated, or otherwise inconsistent, do not use it for x-position or mapping.
+            // Use frame/order at the viewer fps instead, so the pressure graph marker, pressure heatmap,
+            // cylinder pressure texture, and IMU marker all point to the same session sample.
+            if(!sessionRawTimeLooksConsistentWithViewer()){
+                return false;
+            }
+
             return true;
         }
         function clampSessionOrder(order){

@@ -2,6 +2,12 @@
 
 This runs a local HTTP server for the viewer assets and opens the page in a
 native app window via pywebview, so it does not require opening a browser tab.
+
+Persistent layout note:
+- The viewer saves floating panel layout in browser localStorage.
+- pywebview defaults to private mode in many versions, so localStorage may be
+  cleared when the app closes unless private_mode=False and a stable storage
+  path are provided to webview.start().
 """
 
 from __future__ import annotations
@@ -9,6 +15,7 @@ from __future__ import annotations
 import argparse
 import functools
 import json
+import os
 import socket
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -22,6 +29,16 @@ def _pick_free_port(host: str) -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind((host, 0))
         return int(sock.getsockname()[1])
+
+
+def _default_storage_dir() -> Path:
+    """Return a stable pywebview storage directory for cookies/localStorage."""
+    if os.name == "nt":
+        root = os.environ.get("LOCALAPPDATA")
+        if root:
+            return Path(root) / "KinesiologyLabViewer" / "pywebview_storage"
+        return Path.home() / "AppData" / "Local" / "KinesiologyLabViewer" / "pywebview_storage"
+    return Path.home() / ".kinesiologylab_viewer" / "pywebview_storage"
 
 
 class _QuietHandler(SimpleHTTPRequestHandler):
@@ -91,6 +108,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=1600, help="Window width")
     parser.add_argument("--height", type=int, default=950, help="Window height")
     parser.add_argument("--debug", action="store_true", help="Enable pywebview debug mode")
+
+    # New: stable localStorage/cookie storage for persistent panel positions.
+    parser.add_argument(
+        "--storage-dir",
+        default=None,
+        help=(
+            "Folder for pywebview cookies/localStorage. "
+            "Default: a stable KinesiologyLabViewer folder in the user profile."
+        ),
+    )
+    parser.add_argument(
+        "--private",
+        action="store_true",
+        help="Run pywebview in private mode. Layout/cookies/localStorage will NOT persist.",
+    )
     return parser.parse_args()
 
 
@@ -114,25 +146,56 @@ def main() -> int:
         port = _pick_free_port(args.host)
     else:
         port = args.port
+
     handler_cls = functools.partial(_QuietHandler, directory=str(base_dir))
     try:
         server = ThreadingHTTPServer((args.host, port), handler_cls)
     except OSError:
         # If default fixed port is busy, fall back to an available one.
+        # Note: localStorage is origin-specific, so a different port may have a
+        # separate saved layout. Close the old instance or use --port 8765 for
+        # the same saved layout.
         if args.port == DEFAULT_STANDALONE_PORT:
             port = _pick_free_port(args.host)
+            print(
+                f"Warning: port {DEFAULT_STANDALONE_PORT} is busy. "
+                f"Using port {port}. Saved layout may be separate for this port."
+            )
             server = ThreadingHTTPServer((args.host, port), handler_cls)
         else:
             raise
+
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
 
     rel = viewer_path.relative_to(base_dir).as_posix()
     url = f"http://{args.host}:{port}/{rel}"
 
+    storage_dir = Path(args.storage_dir).expanduser().resolve() if args.storage_dir else _default_storage_dir()
+    storage_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"Opening: {url}")
+    print(f"pywebview storage: {storage_dir}")
+    print("Panel layout persistence: " + ("OFF because --private was used" if args.private else "ON"))
+
     try:
         webview.create_window(args.title, url=url, width=args.width, height=args.height)
-        webview.start(debug=args.debug)
+
+        # Important for persistence:
+        # private_mode=False allows cookies/localStorage to be written between runs.
+        # storage_path gives WebView2/pywebview a stable place to save that data.
+        try:
+            webview.start(
+                debug=args.debug,
+                private_mode=bool(args.private),
+                storage_path=str(storage_dir),
+            )
+        except TypeError as exc:
+            print("This pywebview version did not accept private_mode/storage_path.")
+            print(f"Original error: {exc}")
+            print("Update pywebview with: pip install --upgrade pywebview")
+            print("Starting without explicit persistent storage...")
+            webview.start(debug=args.debug)
     finally:
         server.shutdown()
         server.server_close()
