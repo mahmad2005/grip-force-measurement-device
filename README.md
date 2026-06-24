@@ -143,10 +143,10 @@ The system overlays **2D and 3D representations** to show precise alignment and 
 
 ### New GripForce 3D Viewer Demo
 
-[![GripForce 3D Viewer Software Outlook](https://img.youtube.com/vi/0S4J9DHq-p0/0.jpg)](https://www.youtube.com/watch?v=0S4J9DHq-p0)
+[![GripForce 3D Viewer Software Outlook](https://img.youtube.com/vi/amw3kgkXdPw/0.jpg)](https://www.youtube.com/watch?v=amw3kgkXdPw)
 
 **Watch the new 3D Viewer software demonstration:**  
-[GripForce 3D Viewer Software Outlook – YouTube](https://www.youtube.com/watch?v=0S4J9DHq-p0)
+[GripForce 3D Viewer Software Outlook – YouTube](https://www.youtube.com/watch?v=amw3kgkXdPw)
 
 This video showcases the updated **3D visualization interface** with improved **pressure heatmap display**, **real-time IMU data plots**, and **orientation cylinder rendering**.
 
